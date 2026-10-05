@@ -12,6 +12,9 @@ import {
 import { readSettings, writeBrowserAccess, writeSettings } from "./storage/settings";
 import { ROOT_DIR } from "./storage/paths";
 import { buildPromptWithHistory } from "./claude/history";
+import { createClaudeModelCatalog } from "./claude/models";
+import { claudeExecutable } from "./claude/runner";
+import { claudeEffortFor, claudeModelArg, resolveClaudeRun } from "@shared/claudeModels";
 import { runAgent, type RunnerEvent } from "./agents";
 import {
   getCodexRuntimeInfo,
@@ -50,7 +53,7 @@ import type {
   GenerateGroupSummaryRequest,
   SlashItem,
 } from "@shared/ipc";
-import type { AppSettings, Canvas, Provider } from "@shared/types";
+import type { AppSettings, Canvas, Provider, ReasoningEffort } from "@shared/types";
 import { CANVAS_LOCKED_MESSAGE } from "@shared/canvasLock";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -108,6 +111,18 @@ function createWindow(hash?: string): BrowserWindow {
 }
 
 const activeChats = createActiveChats();
+const claudeModels = createClaudeModelCatalog({ executableFor: claudeExecutable });
+// How long a chat start waits for the (normally cached) Claude model list before running anyway.
+const CLAUDE_MODEL_LIST_BUDGET_MS = 2_000;
+
+function claudeBinPathOf(settings: AppSettings): string | undefined {
+  return settings.providers?.claude?.binPath ?? settings.claudeBinPath;
+}
+
+/** Settings' Claude model as a safe `--model` value (empty means Claude Code's default). */
+function settingsClaudeModelArg(settings: AppSettings): string | undefined {
+  return claudeModelArg(settings.providers?.claude?.model ?? settings.claudeModel);
+}
 const canvasLocks = createCanvasLocks({
   isReplyRunning: (holder, canvasId) => activeChats.hasForClientOnCanvas(holder, canvasId),
   stopReplies: (holder, canvasId) => activeChats.abortForClientOnCanvas(holder, canvasId),
@@ -358,11 +373,7 @@ function registerIpc(): void {
     const binPath =
       providerCfg?.binPath ??
       (provider === "claude" ? settings.claudeBinPath : undefined);
-    const model =
-      providerCfg?.model ??
-      (provider === "claude" ? settings.claudeModel : undefined);
-    const reasoningEffort =
-      nodeSettings?.reasoningEffort ?? providerCfg?.reasoningEffort;
+    const requestedEffort = nodeSettings?.reasoningEffort ?? providerCfg?.reasoningEffort;
     const serviceTier = nodeSettings?.serviceTier ?? providerCfg?.serviceTier;
     const compatibleParentSession =
       parentSession?.provider === provider ? parentSession : undefined;
@@ -477,6 +488,7 @@ function registerIpc(): void {
 
     const runAttempt = async (
       attemptModel: string | undefined,
+      reasoningEffort: ReasoningEffort | undefined,
       allowPolicyFallback: boolean,
     ): Promise<boolean> => {
       const attemptController = new AbortController();
@@ -518,15 +530,34 @@ function registerIpc(): void {
     };
 
     try {
+      // Resolved only now that the chat is registered, so Stop works while the model list loads.
+      // The list is warmed at launch; a slow read gets a short budget and the chat runs without it.
+      const listedModels =
+        provider === "claude"
+          ? await claudeModels.modelsWithin(binPath, CLAUDE_MODEL_LIST_BUDGET_MS, controller.signal)
+          : null;
+      const claudeRun =
+        provider === "claude"
+          ? resolveClaudeRun({
+              nodeModel: nodeSettings?.model,
+              settingsModel: providerCfg?.model,
+              legacyModel: settings.claudeModel,
+              requestedEffort,
+              models: listedModels,
+            })
+          : undefined;
+      const model = claudeRun ? claudeRun.model : providerCfg?.model;
+      const runModel = claudeRun?.resolvedModel ?? model;
       const policyRefused = await runAttempt(
         model,
-        provider === "claude" && isFableModel(model),
+        claudeRun ? claudeRun.reasoningEffort : requestedEffort,
+        provider === "claude" && isFableModel(runModel),
       );
       if (policyRefused && !controller.signal.aborted) {
         send({
           chatId,
           type: "model_fallback",
-          fromModel: model ?? "claude-fable-5",
+          fromModel: runModel ?? "claude-fable-5",
           toModel: CLAUDE_FABLE_POLICY_FALLBACK_MODEL,
           reason: "policy_refusal",
         });
@@ -534,11 +565,15 @@ function registerIpc(): void {
           chatId,
           provider,
           phase: "model_fallback",
-          fromModel: model ?? "claude-fable-5",
+          fromModel: runModel ?? "claude-fable-5",
           toModel: CLAUDE_FABLE_POLICY_FALLBACK_MODEL,
           elapsedMs: Date.now() - startedAt,
         });
-        await runAttempt(CLAUDE_FABLE_POLICY_FALLBACK_MODEL, false);
+        await runAttempt(
+          CLAUDE_FABLE_POLICY_FALLBACK_MODEL,
+          claudeEffortFor(listedModels, CLAUDE_FABLE_POLICY_FALLBACK_MODEL, requestedEffort),
+          false,
+        );
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -595,6 +630,11 @@ function registerIpc(): void {
     "desktop-only",
   );
 
+  api.handle("providers:claudeModels", async () => {
+    const settings = await readSettings();
+    return claudeModels.list(claudeBinPathOf(settings));
+  }, "shared");
+
   api.handle("providers:codexRuntime", async () => {
     const settings = await readSettings();
     return getCodexRuntimeInfo(settings.providers?.codex?.binPath ?? "codex");
@@ -613,9 +653,8 @@ function registerIpc(): void {
     "groupSummary:generate",
     async (_client, args: GenerateGroupSummaryRequest) => {
       const settings = await readSettings();
-      const model =
-        settings.providers?.claude?.model ?? settings.claudeModel ?? undefined;
-      const binPath = settings.providers?.claude?.binPath ?? settings.claudeBinPath;
+      const model = settingsClaudeModelArg(settings);
+      const binPath = claudeBinPathOf(settings);
       try {
         return await generateGroupSummaries({
           candidates: args.candidates,
@@ -635,9 +674,8 @@ function registerIpc(): void {
     "canvasName:generate",
     async (_client, args: GenerateCanvasNameRequest) => {
       const settings = await readSettings();
-      const model =
-        settings.providers?.claude?.model ?? settings.claudeModel ?? undefined;
-      const binPath = settings.providers?.claude?.binPath ?? settings.claudeBinPath;
+      const model = settingsClaudeModelArg(settings);
+      const binPath = claudeBinPathOf(settings);
       try {
         return await generateCanvasName({ prompt: args.prompt, model, binPath });
       } catch (err) {
@@ -715,6 +753,11 @@ app.whenReady().then(async () => {
       prewarmCodexAppServer(settings.providers?.codex?.binPath ?? "codex"),
     )
     .catch((error) => console.warn("[codex] prewarm skipped:", error));
+
+  // Read Claude Code's model list now so the first chat start doesn't wait for it.
+  void readSettings()
+    .then((settings) => claudeModels.list(claudeBinPathOf(settings)))
+    .catch((error) => console.warn("[claude] model list prewarm skipped:", error));
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

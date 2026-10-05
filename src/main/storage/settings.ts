@@ -8,6 +8,7 @@ import type {
   ReasoningEffort,
 } from "@shared/types";
 import { PROVIDERS, REASONING_EFFORTS } from "@shared/types";
+import { isClaudeModelId } from "@shared/claudeModels";
 import { SETTINGS_FILE, atomicWriteFile, ensureDirs } from "./paths";
 
 const MAX_RECENTS = 8;
@@ -74,6 +75,7 @@ function sanitizeNodeSettings(raw: unknown): NodeSettings | undefined {
   if (typeof obj.branch === "string" && obj.branch.length > 0) out.branch = obj.branch;
   if (typeof obj.planMode === "boolean") out.planMode = obj.planMode;
   if (typeof obj.chatOnly === "boolean") out.chatOnly = obj.chatOnly;
+  if (isClaudeModelId(obj.model)) out.model = obj.model;
   if (isReasoningEffort(obj.reasoningEffort)) out.reasoningEffort = obj.reasoningEffort;
   if (isCodexServiceTier(obj.serviceTier)) out.serviceTier = obj.serviceTier;
   return out.provider ||
@@ -81,6 +83,7 @@ function sanitizeNodeSettings(raw: unknown): NodeSettings | undefined {
     out.branch ||
     out.planMode ||
     out.chatOnly ||
+    out.model ||
     out.reasoningEffort ||
     out.serviceTier
     ? out

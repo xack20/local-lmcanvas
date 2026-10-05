@@ -364,6 +364,7 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
         deps.ui.notify(LOGIN_ON_MAC_MESSAGE);
       },
       codexRuntime: () => call("providers:codexRuntime"),
+      claudeModels: () => call("providers:claudeModels"),
     },
     askUser: {
       onRequest: (handler) => subscribe("askUser:request", handler),

@@ -141,6 +141,21 @@ export function isClaudeEffort(value: unknown): value is ClaudeEffort {
   return CLAUDE_EFFORTS.some((effort) => effort === value);
 }
 
+/** A model the installed Claude Code offers (from the Agent SDK's supportedModels()). */
+export type ClaudeModelInfo = {
+  /** Alias (`opus`, `default`) or pinned id (`claude-opus-4-6`) passed as `--model`. */
+  value: string;
+  displayName: string;
+  description: string;
+  /** Full model id an alias currently resolves to. */
+  resolvedModel?: string;
+  /** Empty when the model takes no effort level (e.g. Haiku). */
+  supportedEffortLevels: ClaudeEffort[];
+};
+
+/** `live` is false when Claude Code couldn't be asked and `models` are its aliases. */
+export type ClaudeModelList = { models: ClaudeModelInfo[]; live: boolean };
+
 export type NodeSettings = {
   provider?: Provider;
   cwd?: string;
@@ -150,7 +165,9 @@ export type NodeSettings = {
   planMode?: boolean;
   /** When true, skip the claude_code preset and disable agent tools — fast pure-chat path. Claude-only. */
   chatOnly?: boolean;
-  /** Reasoning-effort override for providers that support it. Codex-only today. */
+  /** Claude model override for this node: a Claude Code alias or model id. Claude-only. */
+  model?: string;
+  /** Reasoning-effort override for providers that support it. */
   reasoningEffort?: ReasoningEffort;
   /** Codex processing tier override. */
   serviceTier?: CodexServiceTier;

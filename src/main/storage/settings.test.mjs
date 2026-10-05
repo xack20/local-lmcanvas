@@ -24,6 +24,17 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+describe("last node settings", () => {
+  test("keep a valid Claude model and drop one that isn't a model id", async () => {
+    const current = await settings.readSettings();
+    await settings.writeSettings({ ...current, lastNodeSettings: { model: "opus", reasoningEffort: "high" } });
+    expect((await settings.readSettings()).lastNodeSettings).toEqual({ model: "opus", reasoningEffort: "high" });
+
+    await settings.writeSettings({ ...current, lastNodeSettings: { model: "--verbose" } });
+    expect((await settings.readSettings()).lastNodeSettings).toBeUndefined();
+  });
+});
+
 describe("browser access settings", () => {
   test("default to off with keep-awake on", async () => {
     expect((await settings.readSettings()).browserAccess).toEqual({ enabled: false, keepAwake: true });

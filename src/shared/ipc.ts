@@ -2,6 +2,7 @@ import type {
   AppSettings,
   Canvas,
   CanvasSummary,
+  ClaudeModelList,
   CodexRuntimeInfo,
   ErrorCode,
   ImageMediaType,
@@ -250,6 +251,8 @@ export type LmcApi = {
     openLoginTerminal(provider: Provider): Promise<void>;
     /** Runtime model capabilities advertised by the installed Codex CLI. */
     codexRuntime(): Promise<CodexRuntimeInfo>;
+    /** Models the installed Claude Code offers; its aliases (live: false) if it can't be asked. */
+    claudeModels(): Promise<ClaudeModelList>;
   };
   askUser: {
     /** Subscribe to incoming ask-user requests from the agent. Returns an unsubscribe function. */
