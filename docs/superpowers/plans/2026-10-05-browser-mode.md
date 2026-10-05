@@ -441,7 +441,7 @@ const browser = { id: "b", kind: "browser" };
 describe("createApiRegistry", () => {
   test("routes a call to its handler with the client and args", async () => {
     const api = createApiRegistry();
-    api.handle("echo", async (client, a, b) => ({ kind: client.kind, a, b }));
+    api.handle("echo", async (client, a, b) => ({ kind: client.kind, a, b }), "shared");
     expect(await api.invoke("echo", browser, [1, "x"])).toEqual({ kind: "browser", a: 1, b: "x" });
   });
 
@@ -527,7 +527,7 @@ type CallableHandler = (client: Client, ...args: readonly unknown[]) => unknown;
 export function createApiRegistry(): ApiRegistry {
   const entries = new Map<string, { handler: ApiHandler; scope: ApiScope }>();
   return {
-    handle(channel, handler, scope = "shared") {
+    handle(channel, handler, scope = "desktop-only") {
       if (entries.has(channel)) throw new Error(`Duplicate API channel: ${channel}`);
       entries.set(channel, { handler, scope });
     },
