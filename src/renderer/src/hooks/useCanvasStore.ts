@@ -32,6 +32,7 @@ import { getEdgeHandles } from "@/lib/edgeHandles";
 import type { CanvasLockState, LockHolderKind } from "@/lib/lockText";
 import { FALLBACK_NODE_HEIGHT, VERTICAL_CHILD_OFFSET } from "@/lib/canvasConstants";
 import { useRecentsStore } from "@/hooks/useRecentsStore";
+import { claimCanvasLock, dropCanvasLockClaim } from "@/lib/lockClaims";
 
 type Dirty = { count: number; lastChangeAt: number };
 
@@ -52,6 +53,10 @@ export type CanvasStoreState = {
   error: string | null;
   lock: CanvasLockState;
   lockHolder: LockHolderKind;
+  /** Chats started from this store that haven't ended yet. */
+  runningChats: ReadonlySet<string>;
+  /** The pane unmounted while a reply was running: release the lock after the last chat's final save. */
+  releaseWhenIdle: boolean;
   pendingPrefills: Record<NodeId, PendingPrefill>;
   searchHighlights: Map<NodeId, Set<string>>;
   setSearchHighlights: (nodeId: NodeId, textMatches: string[]) => void;
@@ -70,7 +75,10 @@ export type CanvasStoreState = {
   loadCanvas: (id: string) => Promise<void>;
   takeOverLock: () => Promise<void>;
   markLockLost: (canvasId: string) => void;
+  /** Called when the pane unmounts. Waits for running replies to finish and save first. */
   releaseLock: () => void;
+  chatStarted: (chatId: string) => void;
+  chatSettled: (chatId: string) => void;
   setName: (name: string) => void;
   setProvider: (provider: Provider) => void;
   /** Merge a patch into `node.data.nodeSettings`. Per-node overrides for run settings. */
@@ -224,7 +232,32 @@ function firstUserPrompt(nodes: CanvasNode[]): string | null {
   return null;
 }
 
+type SetCanvasState = StoreApi<CanvasStoreState>["setState"];
+
+function hasStreamingMessage(nodes: Record<NodeId, CanvasNode>): boolean {
+  return Object.values(nodes).some((node) =>
+    node.data.chat.messages.some((message) => message.status === "streaming"),
+  );
+}
+
+function isReplyRunning(s: CanvasStoreState): boolean {
+  return s.runningChats.size > 0 || hasStreamingMessage(s.nodes);
+}
+
+/** Lets go of this store's use of the canvas lock; the Mac is told only when no other store here still uses it. */
+function letGoOfLock(canvasId: string, held: boolean, owner: object): void {
+  const last = dropCanvasLockClaim(canvasId, owner);
+  if (last && held) void window.api.canvasLock.release(canvasId);
+}
+
+function releaseLockNow(get: () => CanvasStoreState, set: SetCanvasState, owner: object): void {
+  const { canvasId, lock } = get();
+  if (canvasId) letGoOfLock(canvasId, lock === "held", owner);
+  set(lock === "held" ? { lock: null, releaseWhenIdle: false } : { releaseWhenIdle: false });
+}
+
 export function createCanvasStoreApi(): CanvasStoreApi {
+  const lockOwner = {};
   return createStore<CanvasStoreState>()(
     subscribeWithSelector((set, get) => ({
       canvasId: null,
@@ -242,6 +275,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       error: null,
       lock: null,
       lockHolder: null,
+      runningChats: new Set(),
+      releaseWhenIdle: false,
       pendingPrefills: {},
       searchHighlights: new Map(),
       merging: false,
@@ -325,9 +360,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       loadCanvas: async (id: string) => {
         set({ loaded: false, error: null });
         const previous = get().canvasId;
-        if (previous && previous !== id && get().lock === "held") {
-          void window.api.canvasLock.release(previous);
-        }
+        if (previous && previous !== id) letGoOfLock(previous, get().lock === "held", lockOwner);
+        claimCanvasLock(id, lockOwner);
         let canvas: Canvas | null;
         let settings: AppSettings;
         try {
@@ -928,15 +962,31 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       },
 
       releaseLock: () => {
-        const id = get().canvasId;
-        if (id && get().lock === "held") void window.api.canvasLock.release(id);
-        set({ lock: null });
+        const s = get();
+        if (s.lock === "held" && isReplyRunning(s)) {
+          set({ releaseWhenIdle: true });
+          return;
+        }
+        releaseLockNow(get, set, lockOwner);
+      },
+
+      chatStarted: (chatId) => {
+        set((s) => ({ runningChats: new Set([...s.runningChats, chatId]) }));
+      },
+
+      chatSettled: (chatId) => {
+        set((s) =>
+          s.runningChats.has(chatId)
+            ? { runningChats: new Set([...s.runningChats].filter((id) => id !== chatId)) }
+            : s,
+        );
       },
 
       save: async () => {
         if (get().lock !== "held") return;
         const canvas = canvasFromState(get());
         if (!canvas) return;
+        const finalSave = !isReplyRunning(get());
         set({ saving: true });
         try {
           await window.api.canvases.write(canvas);
@@ -945,6 +995,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           const message = err instanceof Error ? err.message : String(err);
           set({ saving: false, error: message });
         }
+        // An unmounted pane has nothing left to retry with, so its last save lets go either way.
+        if (finalSave && get().releaseWhenIdle) releaseLockNow(get, set, lockOwner);
       },
     }))
   );

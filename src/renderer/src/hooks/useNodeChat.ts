@@ -111,6 +111,7 @@ export function useNodeChat(nodeId: NodeId) {
 
       const chatId = nanoid();
       activeChatIdRef.current = chatId;
+      storeApi.getState().chatStarted(chatId);
 
       // Per-stream parser that strips any trailing `<next-steps>` block from
       // the visible text and persists the parsed items on the assistant
@@ -191,6 +192,7 @@ export function useNodeChat(nodeId: NodeId) {
         }
         setStreaming(false);
         activeChatIdRef.current = null;
+        storeApi.getState().chatSettled(chatId);
         void storeApi.getState().save();
       };
 
