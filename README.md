@@ -15,11 +15,14 @@ Use LMCanvas from your other computers in a web browser while the desktop app is
 ### Claude improvements
 
 - **Runs your installed `claude` CLI.** It runs the Claude binary set in Settings: by default `claude`, looked up on your `PATH`, and `~/` paths work. If that isn't an executable file, it falls back to the Agent SDK's bundled CLI (Claude Code 2.1.141), which is too old for newer models such as Opus 5.5. Chats, canvas naming and group summaries all use it.
-- **Correct model labels.** The model badge reads the family and version from Opus, Sonnet, Haiku and Fable model ids, e.g. `claude-opus-5-5` → "Opus 5.5". It handles legacy, dotted, date-suffixed and Bedrock/Vertex-style ids, and bare aliases such as `opus`. Other ids are shown unchanged.
-- **Thinking effort per node.** A gauge badge on each Claude node (and in the side-panel composer) picks Default / Low / Medium / High / Extra High / Max and passes it to Claude as `--effort`. Default passes nothing, so Claude Code's own default applies.
-  - New child nodes inherit their parent's settings, including effort.
-  - Switching a node's provider clears its effort.
-  - Codex ignores an effort its model doesn't support.
+- **Any Claude Code model, per node.** The node model picker lists the models your installed Claude Code offers. It asks Claude Code directly (via the Agent SDK's `supportedModels()`), and keeps the list current while LMCanvas runs: models a Claude Code update adds appear on their own within minutes (right away when you open the picker), and a model Claude Code drops is marked "no longer offered". The list covers aliases such as Opus 5.5, Fable 5.1, Sonnet 5.5 and Haiku 4.5, plus pinned older versions.
+  - **Settings model** (top entry) follows the model chosen in Settings → Advanced → Claude, which is now a dropdown of the same list. Picking another entry sets that node's own model, and new child nodes inherit it. New root nodes start with the node settings you changed last, model included; pick **Settings model** to go back.
+  - Codex and Cursor no longer appear in the picker.
+  - If Claude Code can't be asked, the picker falls back to its aliases (Default, Opus, Fable, Sonnet, Haiku).
+- **Correct model labels.** Badges show Claude Code's name for the model (e.g. "Opus 5.5"). Claude Code's own default is shown as the model it currently resolves to. Other Claude ids are parsed (e.g. `claude-opus-5-5` → "Opus 5.5"), including legacy, dotted, date-suffixed and Bedrock/Vertex-style ids.
+- **Thinking effort per node.** A gauge badge on each Claude node (and in the side-panel composer) picks Default or one of the levels the node's model supports, passed to Claude as `--effort`. For example, Opus 4.6 has no Extra High, and the badge is hidden for Haiku, which takes no effort level. Default passes nothing, so Claude Code's own default applies. An effort the model can't take is never sent.
+  - New child nodes inherit their parent's settings, including model and effort.
+  - Switching a node to a model that can't take its effort clears the effort.
 
 ### Canvas improvements
 
