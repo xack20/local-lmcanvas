@@ -8,7 +8,7 @@ const browser = { id: "b", kind: "browser" };
 describe("createApiRegistry", () => {
   test("routes a call to its handler with the client and args", async () => {
     const api = createApiRegistry();
-    api.handle("echo", async (client, a, b) => ({ kind: client.kind, a, b }));
+    api.handle("echo", async (client, a, b) => ({ kind: client.kind, a, b }), "shared");
     expect(await api.invoke("echo", browser, [1, "x"])).toEqual({ kind: "browser", a: 1, b: "x" });
   });
 
@@ -26,6 +26,15 @@ describe("createApiRegistry", () => {
     await expect(api.invoke("web:createPairingLink", browser, [])).rejects.toMatchObject({ code: "forbidden" });
     expect(ran).toBe(0);
     expect(await api.invoke("web:createPairingLink", desktop, [])).toBe(1);
+  });
+
+  test("defaults to desktop-only: a channel registered without a scope is refused for browser clients and runs for desktop", async () => {
+    const api = createApiRegistry();
+    let ran = 0;
+    api.handle("unscoped", async () => ++ran);
+    await expect(api.invoke("unscoped", browser, [])).rejects.toMatchObject({ code: "forbidden" });
+    expect(ran).toBe(0);
+    expect(await api.invoke("unscoped", desktop, [])).toBe(1);
   });
 
   test("passes handler errors through unchanged", async () => {

@@ -26,7 +26,7 @@ type CallableHandler = (client: Client, ...args: readonly unknown[]) => unknown;
 export function createApiRegistry(): ApiRegistry {
   const entries = new Map<string, { handler: ApiHandler; scope: ApiScope }>();
   return {
-    handle(channel, handler, scope = "shared") {
+    handle(channel, handler, scope = "desktop-only") {
       if (entries.has(channel)) throw new Error(`Duplicate API channel: ${channel}`);
       entries.set(channel, { handler, scope });
     },

@@ -148,14 +148,14 @@ const SLASH_CACHE_TTL_MS = 10_000;
 const slashCache = new Map<string, { at: number; items: SlashItem[] }>();
 
 function registerIpc(): void {
-  api.handle("canvases:list", async () => listCanvases());
-  api.handle("canvases:create", async (_client, args: CanvasCreateArgs) => createCanvas(args));
-  api.handle("canvases:read", async (_client, id: string) => readCanvas(id));
-  api.handle("canvases:write", async (_client, canvas: Canvas) => writeCanvas(canvas));
-  api.handle("canvases:delete", async (_client, id: string) => deleteCanvas(id));
+  api.handle("canvases:list", async () => listCanvases(), "shared");
+  api.handle("canvases:create", async (_client, args: CanvasCreateArgs) => createCanvas(args), "shared");
+  api.handle("canvases:read", async (_client, id: string) => readCanvas(id), "shared");
+  api.handle("canvases:write", async (_client, canvas: Canvas) => writeCanvas(canvas), "shared");
+  api.handle("canvases:delete", async (_client, id: string) => deleteCanvas(id), "shared");
 
-  api.handle("settings:read", async () => readSettings());
-  api.handle("settings:write", async (_client, s: AppSettings) => writeSettings(s));
+  api.handle("settings:read", async () => readSettings(), "shared");
+  api.handle("settings:write", async (_client, s: AppSettings) => writeSettings(s), "shared");
 
   api.handle(
     "dialog:pickFolder",
@@ -178,12 +178,16 @@ function registerIpc(): void {
     "desktop-only",
   );
 
-  api.handle("processes:start", async (_client, args: PersistentProcessStartArgs) =>
-    startPersistentProcess(args)
+  api.handle(
+    "processes:start",
+    async (_client, args: PersistentProcessStartArgs) => startPersistentProcess(args),
+    "shared",
   );
 
-  api.handle("processes:stop", async (_client, id: string) =>
-    stopPersistentProcess(id)
+  api.handle(
+    "processes:stop",
+    async (_client, id: string) => stopPersistentProcess(id),
+    "shared",
   );
 
   api.handle("files:list", async (_client, cwd: string): Promise<FileEntry[]> => {
@@ -194,7 +198,7 @@ function registerIpc(): void {
     const files = await listFiles(cwd);
     filesCache.set(cwd, { at: now, files });
     return files;
-  });
+  }, "shared");
 
   api.handle("slash:list", async (_client, cwd: string): Promise<SlashItem[]> => {
     const key = cwd ?? "";
@@ -204,7 +208,7 @@ function registerIpc(): void {
     const items = await listSlashItems(key);
     slashCache.set(key, { at: now, items });
     return items;
-  });
+  }, "shared");
 
   api.handle("chat:start", async (client, args: ChatStartArgs) => {
     const {
@@ -433,13 +437,13 @@ function registerIpc(): void {
     } finally {
       activeChats.delete(chatId);
     }
-  });
+  }, "shared");
 
   api.handle("chat:cancel", async (client, chatId: string) => {
     activeChats.get(chatId)?.controller.abort();
     activeChats.delete(chatId);
     cancelAllForClient(client);
-  });
+  }, "shared");
 
   api.handle("chat:cancelForNode", async (_client, nodeId: string) => {
     for (const [chatId, entry] of activeChats) {
@@ -447,11 +451,11 @@ function registerIpc(): void {
       entry.controller.abort();
       activeChats.delete(chatId);
     }
-  });
+  }, "shared");
 
   api.handle("askUser:respond", async (_client, payload: AskUserResponsePayload) => {
     completeAskUser(payload);
-  });
+  }, "shared");
 
   api.handle("providers:authStatus", async (_client, provider: Provider) => {
     const settings = await readSettings();
@@ -459,7 +463,7 @@ function registerIpc(): void {
       settings.providers?.[provider]?.binPath ??
       (provider === "claude" ? settings.claudeBinPath : undefined);
     return getProviderAuthStatus(provider, binPath);
-  });
+  }, "shared");
 
   api.handle(
     "providers:openLogin",
@@ -476,7 +480,7 @@ function registerIpc(): void {
   api.handle("providers:codexRuntime", async () => {
     const settings = await readSettings();
     return getCodexRuntimeInfo(settings.providers?.codex?.binPath ?? "codex");
-  });
+  }, "shared");
 
   api.handle(
     "window:openCanvas",
@@ -506,6 +510,7 @@ function registerIpc(): void {
         return [];
       }
     },
+    "shared",
   );
 
   api.handle(
@@ -522,6 +527,7 @@ function registerIpc(): void {
         return null;
       }
     },
+    "shared",
   );
 }
 
