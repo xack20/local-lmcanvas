@@ -11,6 +11,8 @@ import { FolderBadge } from "./FolderBadge";
 import { FastBadge } from "./FastBadge";
 import { PowerBadge } from "./PowerBadge";
 import { ClaudeEffortBadge } from "./ClaudeEffortBadge";
+import { ContextBadge } from "./ContextBadge";
+import { ContextBar } from "./ContextBar";
 import { BranchBadge } from "./BranchBadge";
 import { PlanBadge } from "./PlanBadge";
 import { OnboardingTitle } from "./OnboardingTitle";
@@ -45,6 +47,7 @@ function CustomNodeImpl(props: NodeProps) {
   const { submit, stop, streaming } = useNodeChat(id);
   const removeNode = useCanvasStore((s) => s.removeNode);
   const patchNode = useCanvasStore((s) => s.patchNode);
+  const compacting = useCanvasStore((s) => s.compactingNodeIds[id] === true);
   const merging = useCanvasStore((s) => s.merging);
   const mergeIds = useCanvasStore((s) => s.mergeIds);
   const startMerge = useCanvasStore((s) => s.startMerge);
@@ -228,6 +231,7 @@ function CustomNodeImpl(props: NodeProps) {
           <ModelBadge nodeId={id} />
           <PowerBadge nodeId={id} />
           <ClaudeEffortBadge nodeId={id} />
+          <ContextBadge nodeId={id} />
           <FolderBadge nodeId={id} />
           <BranchBadge nodeId={id} />
           <FastBadge nodeId={id} />
@@ -300,7 +304,7 @@ function CustomNodeImpl(props: NodeProps) {
               className={clsx(canEditPrompt ? "cursor-text" : "cursor-default")}
               title={canEditPrompt ? "Click to edit prompt" : undefined}
             >
-              <NodeResponse message={userMessage} nodeId={id} />
+              <NodeResponse message={userMessage} nodeId={id} compacting={compacting} />
             </div>
           )}
           {userMessage && promptEdit.isEditing && (
@@ -332,6 +336,7 @@ function CustomNodeImpl(props: NodeProps) {
                 message={assistantMessage}
                 onStop={stop}
                 nodeId={id}
+                compacting={compacting}
                 onSuggestionClick={(prompt) =>
                   branch({
                     prefill: prompt,
@@ -429,6 +434,8 @@ function CustomNodeImpl(props: NodeProps) {
             <Plus className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        <ContextBar nodeId={id} />
       </div>
 
       <NodeSourceHandles />

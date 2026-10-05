@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import clsx from "clsx";
 import { useState } from "react";
 import type {
+  CompactionBlock,
   ContentBlock,
   ImageBlock,
   Message,
@@ -16,12 +17,14 @@ import { ImagePreviewModal } from "./ImagePreviewModal";
 import { ErrorBlock } from "./ErrorBlock";
 import { pickSuggestionIcons } from "@/lib/suggestionIcon";
 import { claudeModelLabel } from "@/lib/modelLabel";
+import { compactionText } from "@shared/contextSize";
 
 const MAX_TOOLS_PER_CHUNK = 5;
 
 type RenderItem =
   | { kind: "text"; text: string; key: string }
   | { kind: "thinking"; text: string; key: string }
+  | { kind: "compaction"; block: CompactionBlock; key: string }
   | {
       kind: "toolGroup";
       blocks: ToolUseBlock[];
@@ -67,6 +70,8 @@ function groupBlocks(blocks: ContentBlock[]): RenderItem[] {
       items.push({ kind: "text", text: b.text, key: `t-${i}` });
     } else if (b.type === "thinking") {
       items.push({ kind: "thinking", text: b.text, key: `th-${i}` });
+    } else if (b.type === "compaction") {
+      items.push({ kind: "compaction", block: b, key: `c-${i}` });
     }
   });
   flush();
@@ -81,6 +86,8 @@ type Props = {
   /** Click handler for a `<next-steps>` suggestion button — receives the
    *  full prompt the button represents. */
   onSuggestionClick?: (prompt: string) => void;
+  /** Claude Code is summarizing this node's conversation right now. */
+  compacting?: boolean;
 };
 
 export function NodeResponse({
@@ -89,10 +96,12 @@ export function NodeResponse({
   nodeId,
   imageDisplay = "thumbnail",
   onSuggestionClick,
+  compacting = false,
 }: Props) {
   const isUser = message.role === "user";
   const isError = message.status === "error";
   const isStreaming = message.status === "streaming";
+  const indicatorLabel = compacting ? "Compacting conversation…" : undefined;
   const hasAnyContent = message.blocks.some((b) => {
     if (b.type === "text") return b.text.length > 0;
     return true;
@@ -136,7 +145,7 @@ export function NodeResponse({
         <ModelFallbackNotice fallback={message.modelFallback} />
       )}
 
-      {isStreaming && !hasAnyContent && <GeneratingIndicator onStop={onStop} />}
+      {isStreaming && !hasAnyContent && <GeneratingIndicator onStop={onStop} label={indicatorLabel} />}
 
       {(() => {
         const items = groupBlocks(message.blocks);
@@ -155,6 +164,15 @@ export function NodeResponse({
           if (item.kind === "thinking") {
             return <ThinkingView key={item.key} text={item.text} />;
           }
+          if (item.kind === "compaction") {
+            return (
+              <div key={item.key} className="my-2 flex items-center gap-2 text-[9px] text-muted-foreground">
+                <span className="h-px flex-1 bg-border" />
+                <span>{compactionText(item.block)}</span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            );
+          }
           const awaitingText = isStreaming && idx === lastIdx;
           return (
             <ToolGroupView
@@ -172,7 +190,7 @@ export function NodeResponse({
 
       {isStreaming && hasAnyContent && (
         <div className="pt-0.5">
-          <GeneratingIndicator onStop={onStop} compact />
+          <GeneratingIndicator onStop={onStop} label={indicatorLabel} compact />
         </div>
       )}
 
@@ -259,9 +277,12 @@ function SuggestionButtons({
 function GeneratingIndicator({
   onStop,
   compact = false,
+  label = "Generating response…",
 }: {
   onStop?: () => void;
   compact?: boolean;
+  /** Replaces the default text, e.g. while Claude Code compacts. */
+  label?: string;
 }) {
   const [hovered, setHovered] = useState(false);
   return (
@@ -285,7 +306,7 @@ function GeneratingIndicator({
           <Loader2 size={12} className="animate-spin text-muted-foreground" />
         )}
       </button>
-      <span className="node-shimmer font-medium">Generating response…</span>
+      <span className="node-shimmer font-medium">{label}</span>
     </div>
   );
 }

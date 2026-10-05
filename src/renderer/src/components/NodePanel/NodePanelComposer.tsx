@@ -30,6 +30,7 @@ import {
 import { ModelBadge } from "@/components/Canvas/ModelBadge";
 import { PowerBadge } from "@/components/Canvas/PowerBadge";
 import { ClaudeEffortBadge } from "@/components/Canvas/ClaudeEffortBadge";
+import { ContextBadge } from "@/components/Canvas/ContextBadge";
 import { BranchBadge } from "@/components/Canvas/BranchBadge";
 import { PlanBadge } from "@/components/Canvas/PlanBadge";
 import {
@@ -283,6 +284,7 @@ export function NodePanelComposer({
           <ModelBadge nodeId={parentId} popoverSide="top" />
           <PowerBadge nodeId={parentId} popoverSide="top" />
           <ClaudeEffortBadge nodeId={parentId} popoverSide="top" />
+          <ContextBadge nodeId={parentId} popoverSide="top" />
           <FolderBadge nodeId={parentId} popoverSide="top" />
           <BranchBadge nodeId={parentId} popoverSide="top" />
           <FastBadge nodeId={parentId} />
