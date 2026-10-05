@@ -18,6 +18,8 @@ import {
   FinishSoundSetting,
   Toggle,
 } from "./settings";
+import { BrowserAccessSection } from "./settings/BrowserAccessSection";
+import { isBrowser } from "@/lib/webBridge";
 
 type View = "main" | "keybindings";
 
@@ -172,6 +174,8 @@ export function SettingsModal({ open, onClose }: Props) {
                   ))}
                 </div>
               </div>
+
+              {!isBrowser && <BrowserAccessSection />}
 
               <div className="pt-2 mt-1 border-t border-border">
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
