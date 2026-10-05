@@ -51,6 +51,7 @@ import type {
   SlashItem,
 } from "@shared/ipc";
 import type { AppSettings, Canvas, Provider } from "@shared/types";
+import { CANVAS_LOCKED_MESSAGE } from "@shared/canvasLock";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -233,7 +234,7 @@ function registerIpc(): void {
     "canvases:write",
     async (client, canvas: Canvas) => {
       if (!canvasLocks.canWrite(canvas.id, client)) {
-        throw new Error("This chat is open on another device.");
+        throw new Error(CANVAS_LOCKED_MESSAGE);
       }
       return writeCanvas(canvas);
     },

@@ -28,6 +28,7 @@ import {
 } from "@shared/history";
 import { isUnnamedCanvasName, promptToCanvasName } from "@shared/canvasName";
 import type { Attachment, CanvasLockResult } from "@shared/ipc";
+import { isCanvasLockedError } from "@shared/canvasLock";
 import { getEdgeHandles } from "@/lib/edgeHandles";
 import type { CanvasLockState, LockHolderKind } from "@/lib/lockText";
 import { FALLBACK_NODE_HEIGHT, VERTICAL_CHILD_OFFSET } from "@/lib/canvasConstants";
@@ -50,7 +51,10 @@ export type CanvasStoreState = {
   loaded: boolean;
   dirty: Dirty;
   saving: boolean;
+  /** Why the canvas couldn't be loaded. Replaces the canvas. */
   error: string | null;
+  /** Why the last save failed. Shown over the canvas; the next save retries. */
+  saveError: string | null;
   lock: CanvasLockState;
   lockHolder: LockHolderKind;
   /** On a conflict: the holder has a reply running here, which taking over would stop. */
@@ -275,6 +279,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       dirty: { count: 0, lastChangeAt: 0 },
       saving: false,
       error: null,
+      saveError: null,
       lock: null,
       lockHolder: null,
       lockReplyRunning: false,
@@ -361,7 +366,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       },
 
       loadCanvas: async (id: string) => {
-        set({ loaded: false, error: null });
+        set({ loaded: false, error: null, saveError: null });
         const previous = get().canvasId;
         if (previous && previous !== id) letGoOfLock(previous, get().lock === "held", lockOwner);
         claimCanvasLock(id, lockOwner);
@@ -994,10 +999,11 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         set({ saving: true });
         try {
           await window.api.canvases.write(canvas);
-          set({ saving: false, dirty: { count: 0, lastChangeAt: 0 } });
+          set({ saving: false, saveError: null, dirty: { count: 0, lastChangeAt: 0 } });
         } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          set({ saving: false, error: message });
+          set({ saving: false });
+          if (isCanvasLockedError(err)) get().markLockLost(canvas.id);
+          else set({ saveError: err instanceof Error ? err.message : String(err) });
         }
         // An unmounted pane has nothing left to retry with, so its last save lets go either way.
         if (finalSave && get().releaseWhenIdle) releaseLockNow(get, set, lockOwner);

@@ -24,6 +24,7 @@ import { useRegisterPaneStore } from "@/hooks/usePaneRegistry";
 import { useBranchRequestStore } from "@/hooks/useBranchRequestStore";
 import { useBranchFromNode } from "@/hooks/useBranchFromNode";
 import { findMessageTextViewportY } from "@/lib/nodeDom";
+import { saveErrorText } from "@/lib/saveRetry";
 
 type CanvasPaneProps = {
   /** The canvas to load into this pane. Also serves as the pane's identity. */
@@ -72,6 +73,7 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
   const canvasId = useCanvasStore((s) => s.canvasId);
   const cwd = useCanvasStore((s) => s.cwd);
   const error = useCanvasStore((s) => s.error);
+  const saveError = useCanvasStore((s) => s.saveError);
   const saving = useCanvasStore((s) => s.saving);
   const lock = useCanvasStore((s) => s.lock);
   const lockHolder = useCanvasStore((s) => s.lockHolder);
@@ -143,6 +145,17 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
             saving={saving}
             splitMode={splitMode}
           />
+        </div>
+      )}
+
+      {saveError && (
+        <div className="pointer-events-none absolute top-12 left-1/2 z-30 -translate-x-1/2">
+          <div
+            role="status"
+            className="max-w-[90vw] truncate rounded-md border border-amber-500/40 bg-card px-3 py-1.5 text-xs text-amber-600 shadow-lg dark:text-amber-400"
+          >
+            {saveErrorText(saveError)}
+          </div>
         </div>
       )}
 

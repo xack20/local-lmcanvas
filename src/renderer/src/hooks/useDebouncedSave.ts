@@ -1,32 +1,34 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useCanvasStoreApi } from "./useCanvasStore";
+import { useWebUiStore } from "@/lib/webUi";
+import { startSaveScheduler } from "@/lib/saveRetry";
+
+const timers = {
+  set: (fn: () => void, ms: number) => window.setTimeout(fn, ms),
+  clear: (handle: unknown) => window.clearTimeout(handle as number),
+};
+
+const onReconnect = (listener: () => void): (() => void) =>
+  useWebUiStore.subscribe((ui, previous) => {
+    if (ui.connection === "connected" && previous.connection !== "connected") listener();
+  });
 
 /**
- * Watches `dirty` and flushes save() after quiet period.
+ * Watches `dirty` and flushes save() after quiet period, retrying failed saves.
  * Also saves on beforeunload.
  */
 export function useDebouncedSave(delayMs = 1200) {
   const storeApi = useCanvasStoreApi();
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const unsub = storeApi.subscribe(
-      (s) => s.dirty.lastChangeAt,
-      () => {
-        if (timerRef.current) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(() => {
-          void storeApi.getState().save();
-        }, delayMs);
-      }
-    );
+    const stop = startSaveScheduler(storeApi, { delayMs, timers, onReconnect });
     const onUnload = () => {
       void storeApi.getState().save();
     };
     window.addEventListener("beforeunload", onUnload);
     return () => {
-      unsub();
+      stop();
       window.removeEventListener("beforeunload", onUnload);
-      if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [delayMs, storeApi]);
 }
