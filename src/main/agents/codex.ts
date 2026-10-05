@@ -519,7 +519,7 @@ async function handleCodexServerRequest(
     }));
     const response = await requestAnswer(
       questions,
-      opts.webContents,
+      opts.client,
       opts.nodeId,
       requestSignal,
       request.autoResolutionMs ?? undefined,
@@ -690,7 +690,7 @@ async function handleCodexServerRequest(
     if (formFields.length > 0) {
       const response = await requestAnswer(
         formFields.map((field) => field.question),
-        opts.webContents,
+        opts.client,
         opts.nodeId,
         requestSignal,
       );
@@ -877,7 +877,7 @@ function requestCodexApproval(
 ): Promise<AskUserResponsePayload> {
   return requestAnswer(
     [question],
-    opts.webContents,
+    opts.client,
     opts.nodeId,
     signal,
   );

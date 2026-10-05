@@ -1,4 +1,4 @@
-import type { WebContents } from "electron";
+import type { Client } from "../api/client";
 import type { Attachment } from "@shared/ipc";
 import type {
   CodexServiceTier,
@@ -72,9 +72,9 @@ export type RunAgentOpts = {
   planMode?: boolean;
   /** Claude-only; skip the claude_code preset for a fast pure-chat path. Ignored when planMode is also true. */
   chatOnly?: boolean;
-  // webContents/nodeId are claude-specific (askUser MCP), but kept required so
-  // the IPC handler can pass a single opts object to any provider runner.
-  webContents: WebContents;
+  // client/nodeId are claude-specific (askUser MCP), but kept required so
+  // the API handler can pass a single opts object to any provider runner.
+  client: Client;
   nodeId: string;
   onEvent: (ev: RunnerEvent) => void;
 };

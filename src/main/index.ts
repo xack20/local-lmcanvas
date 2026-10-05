@@ -24,9 +24,10 @@ import { listFiles } from "./files";
 import { listSlashItems } from "./slashItems";
 import { startPersistentProcess, stopPersistentProcess } from "./processes";
 import {
-  cancelAllForWebContents,
+  cancelAllForClient,
   completeRequest as completeAskUser,
 } from "./claude/askUserBridge";
+import { desktopClient } from "./api/client";
 import { getShellPath } from "./shellPath";
 import { initAutoUpdate, checkForUpdatesNow } from "./autoUpdate";
 import type {
@@ -210,12 +211,8 @@ function registerIpc(): void {
       parentSession,
       currentSession,
     } = args;
-    const sender = e.sender;
-
-    const send = (ev: ChatEvent) => {
-      if (sender.isDestroyed()) return;
-      sender.send("chat:event", ev);
-    };
+    const client = desktopClient(e.sender);
+    const send = (ev: ChatEvent) => client.send("chat:event", ev);
 
     const canvas = await readCanvas(canvasId);
     if (!canvas) {
@@ -379,7 +376,7 @@ function registerIpc(): void {
           signal: attemptController.signal,
           planMode,
           chatOnly,
-          webContents: sender,
+          client,
           nodeId,
           onEvent: (ev) => {
             if (policyRefused) return;
@@ -432,7 +429,7 @@ function registerIpc(): void {
   ipcMain.handle("chat:cancel", async (e, chatId: string) => {
     activeChats.get(chatId)?.controller.abort();
     activeChats.delete(chatId);
-    cancelAllForWebContents(e.sender);
+    cancelAllForClient(desktopClient(e.sender));
   });
 
   ipcMain.handle("chat:cancelForNode", async (_e, nodeId: string) => {

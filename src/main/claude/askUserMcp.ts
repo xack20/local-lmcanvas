@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WebContents } from "electron";
+import type { Client } from "../api/client";
 import {
   createSdkMcpServer,
   tool,
@@ -42,7 +42,7 @@ const inputSchema = {
 };
 
 export function buildAskUserServer(
-  webContents: WebContents,
+  client: Client,
   nodeId: string,
   abortSignal?: AbortSignal,
 ): McpSdkServerConfigWithInstance {
@@ -55,7 +55,7 @@ export function buildAskUserServer(
         "Ask the local user a structured multiple-choice question and wait for their answer. Use this in place of the built-in AskUserQuestion tool — it renders an interactive picker inside local-lmcanvas. Supports 1–4 questions, each with 2–4 options.",
         inputSchema,
         async (args) => {
-          const response = await requestAnswer(args.questions, webContents, nodeId, abortSignal);
+          const response = await requestAnswer(args.questions, client, nodeId, abortSignal);
           if (response.cancelled) {
             return {
               content: [

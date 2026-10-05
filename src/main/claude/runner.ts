@@ -97,7 +97,7 @@ import type {
   TextBlockParam,
   ToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages.mjs";
-import type { WebContents } from "electron";
+import type { Client } from "../api/client";
 import type { Attachment } from "@shared/ipc";
 import { isClaudeEffort, type ProviderSessionRef, type ReasoningEffort } from "@shared/types";
 import { buildAskUserServer } from "./askUserMcp";
@@ -150,7 +150,7 @@ export type RunClaudeOpts = {
   chatOnly?: boolean;
   parentSession?: ProviderSessionRef;
   currentSession?: ProviderSessionRef;
-  webContents: WebContents;
+  client: Client;
   nodeId: string;
   onEvent: (ev: RunnerEvent) => void;
 };
@@ -204,7 +204,7 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
   const baseSystemPrompt = opts.systemPrompt ?? "";
   const askUserServer = chatOnly
     ? undefined
-    : buildAskUserServer(opts.webContents, opts.nodeId, controller.signal);
+    : buildAskUserServer(opts.client, opts.nodeId, controller.signal);
 
   const systemPromptOption = chatOnly
     ? baseSystemPrompt.length > 0
