@@ -7,8 +7,11 @@ const { autoUpdater } = electronUpdater;
 
 let manualCheckInFlight = false;
 
+// Locally patched build: an upstream release would silently replace it on quit.
+const UPDATES_DISABLED = true;
+
 export function initAutoUpdate(): void {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged || UPDATES_DISABLED) return;
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -51,6 +54,13 @@ export function initAutoUpdate(): void {
 }
 
 export function checkForUpdatesNow(): void {
+  if (UPDATES_DISABLED) {
+    notify(
+      "Updates are off",
+      "This is a locally patched build. Rebuild it from ~/projects/local-lmcanvas to update.",
+    );
+    return;
+  }
   if (!app.isPackaged) {
     notify("Updates disabled", "Auto-update only runs in packaged builds.");
     return;
