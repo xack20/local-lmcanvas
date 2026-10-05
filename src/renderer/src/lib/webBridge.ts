@@ -348,6 +348,7 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
       start: startChat,
       cancel: (chatId) => call("chat:cancel", chatId),
       cancelForNode: (nodeId) => call("chat:cancelForNode", nodeId),
+      compact: (args) => call("chat:compact", args),
       onEvent: (handler) => subscribe("chat:event", handler),
     },
     dialog: { pickFolder: (defaultPath) => deps.ui.pickFolder(defaultPath) },

@@ -96,6 +96,26 @@ export type ChatStartArgs = {
   currentSession?: ProviderSessionRef;
 };
 
+export type CompactArgs = {
+  canvasId: string;
+  nodeId: string;
+  mode: "inPlace" | "summaryNode";
+  focus?: string;
+  session: ProviderSessionRef;
+  model?: string;
+  cwd?: string;
+};
+
+export type CompactResult = {
+  sessionId: string;
+  before: number | null;
+  after: number | null;
+  summary: string | null;
+  context: ContextSnapshot | null;
+  /** The compaction call's own token use and cost. */
+  usage?: UsageSummary;
+};
+
 export type ChatEvent =
   | { chatId: string; type: "start" }
   | { chatId: string; type: "response_complete" }
@@ -235,6 +255,8 @@ export type LmcApi = {
     cancel(chatId: string): Promise<void>;
     /** Cancel any in-progress chats associated with the given node. */
     cancelForNode(nodeId: string): Promise<void>;
+    /** Runs Claude Code's /compact on a node's session, in place or as a summary fork. */
+    compact(args: CompactArgs): Promise<CompactResult>;
     onEvent(handler: (ev: ChatEvent) => void): () => void;
   };
   dialog: {

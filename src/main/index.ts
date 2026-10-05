@@ -14,6 +14,7 @@ import { ROOT_DIR } from "./storage/paths";
 import { buildPromptWithHistory } from "./claude/history";
 import { createClaudeModelCatalog } from "./claude/models";
 import { loadModelWindows, type ModelWindows } from "./claude/modelWindows";
+import { compactFocus, runCompaction } from "./claude/compaction";
 import { claudeExecutable } from "./claude/runner";
 import { claudeEffortFor, claudeModelArg, resolveClaudeRun } from "@shared/claudeModels";
 import { runAgent, type RunnerEvent } from "./agents";
@@ -48,6 +49,8 @@ import type {
   ChatEvent,
   ChatStartArgs,
   CanvasCreateArgs,
+  CompactArgs,
+  CompactResult,
   GenerateCanvasNameRequest,
   PersistentProcessStartArgs,
   FileEntry,
@@ -614,6 +617,36 @@ function registerIpc(): void {
   api.handle("chat:cancelForNode", async (_client, nodeId: string) => {
     activeChats.abortForNode(nodeId);
   }, "shared");
+
+  api.handle(
+    "chat:compact",
+    async (client, args: CompactArgs): Promise<CompactResult> => {
+      if (!canvasLocks.canWrite(args.canvasId, client)) throw new Error(CANVAS_LOCKED_MESSAGE);
+      const session = args.session;
+      if (session?.provider !== "claude" || typeof session.id !== "string" || session.id.length === 0) {
+        throw new Error("This node has no Claude session to compact.");
+      }
+      const settings = await readSettings();
+      const binPath = claudeBinPathOf(settings);
+      const run = resolveClaudeRun({
+        nodeModel: args.model,
+        settingsModel: settings.providers?.claude?.model,
+        legacyModel: settings.claudeModel,
+        models: await claudeModels.modelsWithin(binPath, CLAUDE_MODEL_LIST_BUDGET_MS),
+      });
+      const result = await runCompaction({
+        executable: claudeExecutable(binPath),
+        sessionId: session.id,
+        fork: args.mode === "summaryNode",
+        focus: compactFocus(args.focus),
+        model: run.model,
+        cwd: typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : homedir(),
+      });
+      if (result.context) void modelWindows?.learn(result.context.model, result.context.window).catch(() => undefined);
+      return result;
+    },
+    "shared",
+  );
 
   // Browser adapter only (settles chats whose start request dropped); not part of LmcApi or the preload.
   api.handle("chat:isActive", async (_client, chatId: unknown) => typeof chatId === "string" && activeChats.has(chatId), "shared");

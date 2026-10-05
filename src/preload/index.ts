@@ -5,6 +5,7 @@ import type {
   CanvasLockLostEvent,
   ChatEvent,
   ChatStartArgs,
+  CompactArgs,
   GenerateCanvasNameRequest,
   GenerateGroupSummaryRequest,
   LmcApi,
@@ -29,6 +30,7 @@ const api: LmcApi = {
     start: (args: ChatStartArgs) => ipcRenderer.invoke("chat:start", args),
     cancel: (chatId) => ipcRenderer.invoke("chat:cancel", chatId),
     cancelForNode: (nodeId) => ipcRenderer.invoke("chat:cancelForNode", nodeId),
+    compact: (args: CompactArgs) => ipcRenderer.invoke("chat:compact", args),
     onEvent: (handler: (ev: ChatEvent) => void) => {
       const listener = (_: Electron.IpcRendererEvent, ev: ChatEvent) => handler(ev);
       ipcRenderer.on("chat:event", listener);
