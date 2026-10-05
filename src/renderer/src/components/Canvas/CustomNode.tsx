@@ -1,14 +1,18 @@
 import { memo, useMemo, useRef, useState } from "react";
 import { type NodeProps } from "@xyflow/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { GitMerge, Plus } from "lucide-react";
+import { GitMerge, PanelRightOpen, Plus } from "lucide-react";
 import clsx from "clsx";
 import { MergeButton } from "./MergeButton";
 import { useCanvasStore } from "@/hooks/useCanvasStore";
+import { useNodePanelStore } from "@/hooks/useNodePanelStore";
 import { ModelBadge } from "./ModelBadge";
 import { FolderBadge } from "./FolderBadge";
 import { FastBadge } from "./FastBadge";
 import { PowerBadge } from "./PowerBadge";
+import { ClaudeEffortBadge } from "./ClaudeEffortBadge";
+import { BranchBadge } from "./BranchBadge";
+import { PlanBadge } from "./PlanBadge";
 import { OnboardingTitle } from "./OnboardingTitle";
 import { useNodeChat } from "@/hooks/useNodeChat";
 import type { CanvasNode, ImageBlock } from "@shared/types";
@@ -44,6 +48,8 @@ function CustomNodeImpl(props: NodeProps) {
   const merging = useCanvasStore((s) => s.merging);
   const mergeIds = useCanvasStore((s) => s.mergeIds);
   const startMerge = useCanvasStore((s) => s.startMerge);
+  const setSelectedNodeId = useCanvasStore((s) => s.setSelectedNodeId);
+  const showNodePanel = useNodePanelStore((s) => s.show);
   const toggleMergeNode = useCanvasStore((s) => s.toggleMergeNode);
   const askUserRequest = useAskUserStore((s) => s.byNode[id]);
   const totalNodeCount = useCanvasStore((s) => Object.keys(s.nodes).length);
@@ -221,8 +227,11 @@ function CustomNodeImpl(props: NodeProps) {
         <div className="absolute left-4 right-4 top-3 flex items-center gap-1.5 min-w-0">
           <ModelBadge nodeId={id} />
           <PowerBadge nodeId={id} />
+          <ClaudeEffortBadge nodeId={id} />
           <FolderBadge nodeId={id} />
+          <BranchBadge nodeId={id} />
           <FastBadge nodeId={id} />
+          <PlanBadge nodeId={id} />
           {isMergeNode && (
             <span
               className="flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
@@ -377,6 +386,24 @@ function CustomNodeImpl(props: NodeProps) {
             showFollowUp ? "opacity-100" : "opacity-0 pointer-events-none",
           )}
         >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedNodeId(id);
+              showNodePanel();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            disabled={!showFollowUp}
+            className={clsx(
+              "flex h-7 min-w-[36px] items-center justify-center rounded-xl bg-foreground text-card px-2 shadow-lg transition hover:opacity-90",
+              showFollowUp ? "cursor-pointer" : "cursor-default",
+            )}
+            title="Open in side panel"
+            aria-label="Open in side panel"
+          >
+            <PanelRightOpen className="h-3 w-3" />
+          </button>
           {!merging && (
             <MergeButton
               disabled={!showFollowUp}

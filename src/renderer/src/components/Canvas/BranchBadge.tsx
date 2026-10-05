@@ -6,9 +6,9 @@ import { useCanvasStore } from "@/hooks/useCanvasStore";
 import { useRecentsStore } from "@/hooks/useRecentsStore";
 import { BadgePopover } from "./BadgePopover";
 
-type Props = { nodeId: NodeId };
+type Props = { nodeId: NodeId; popoverSide?: "top" | "bottom" };
 
-export function BranchBadge({ nodeId }: Props) {
+export function BranchBadge({ nodeId, popoverSide }: Props) {
   const effectiveBranch = useCanvasStore((s) => s.getEffectiveBranch(nodeId));
   const setNodeSettings = useCanvasStore((s) => s.setNodeSettings);
   const recentBranches = useRecentsStore((s) => s.branches);
@@ -21,16 +21,18 @@ export function BranchBadge({ nodeId }: Props) {
 
   return (
     <BadgePopover
+      side={popoverSide}
       title={overridden ? `Branch: ${effectiveBranch}` : "No branch label set"}
       overridden={overridden}
       ariaHasPopup="dialog"
       panelClassName="min-w-[220px]"
+      shrinkable
       label={
         <>
-          <GitBranch className="w-[10px] h-[10px] text-muted-foreground" />
+          <GitBranch className="w-[10px] h-[10px] shrink-0 text-muted-foreground" />
           <span
             className={clsx(
-              "tracking-tight text-[8px] max-w-[120px] truncate",
+              "tracking-tight text-[8px] max-w-[120px] min-w-0 truncate",
               !overridden && "italic text-muted-foreground",
             )}
           >

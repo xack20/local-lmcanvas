@@ -24,6 +24,8 @@ type BadgePopoverProps = {
   /** ARIA props for the trigger button. */
   ariaHasPopup?: "listbox" | "dialog" | "menu";
   side?: "top" | "bottom";
+  /** Let the pill shrink (truncating its label) when the toolbar runs out of room. */
+  shrinkable?: boolean;
 };
 
 export function BadgePopover({
@@ -35,6 +37,7 @@ export function BadgePopover({
   triggerStyle,
   ariaHasPopup = "dialog",
   side = "bottom",
+  shrinkable = false,
 }: BadgePopoverProps) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -59,7 +62,7 @@ export function BadgePopover({
   }, [open]);
 
   return (
-    <div ref={wrapperRef} className="nodrag relative">
+    <div ref={wrapperRef} className={clsx("nodrag relative", shrinkable ? "min-w-0" : "shrink-0")}>
       <button
         type="button"
         onClick={(e) => {
@@ -70,6 +73,7 @@ export function BadgePopover({
         className={clsx(
           "flex items-center gap-1 rounded-sm border bg-card text-foreground px-1.5 py-[5px] text-xs font-medium cursor-pointer outline-none transition-colors focus-visible:ring-1 focus-visible:ring-foreground/30",
           "hover:bg-muted",
+          shrinkable && "max-w-full",
           open && "bg-muted",
           overridden
             ? "border-accent/60 ring-1 ring-accent/30"

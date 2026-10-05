@@ -399,9 +399,11 @@ export function createCanvasStoreApi(): CanvasStoreApi {
 
       setNodeSettings: (nodeId, patch) => {
         let snapshot: NodeSettings | undefined;
+        let applied = false;
         set((s) => {
           const existing = s.nodes[nodeId];
           if (!existing) return s;
+          applied = true;
           const current = existing.data.nodeSettings ?? {};
           const merged: NodeSettings = { ...current };
           for (const key of Object.keys(patch) as (keyof NodeSettings)[]) {
@@ -427,7 +429,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
             nodes: { ...s.nodes, [nodeId]: { ...existing, data: nextData } },
           };
         });
-        if (snapshot) useRecentsStore.getState().setLastNodeSettings(snapshot);
+        // Clearing a node's last override also clears the seed for new nodes.
+        if (applied) useRecentsStore.getState().setLastNodeSettings(snapshot);
         get().markDirty();
       },
 

@@ -15,6 +15,7 @@ import {
 } from "@/hooks/useTimelinePanelStore";
 import { TimelinePanel } from "@/components/TimelinePanel/TimelinePanel";
 import { useActiveSelectedNodeId } from "@/hooks/useActiveSelectedNode";
+import { useNodePanelStore } from "@/hooks/useNodePanelStore";
 import { usePreferencesStore } from "@/hooks/usePreferencesStore";
 import { onOpenSettings } from "@/lib/openSettings";
 import { matchesShortcut } from "@/lib/shortcut";
@@ -38,9 +39,11 @@ export function CanvasPage({ ids }: CanvasPageProps) {
   const toggleBrowser = useBrowserPanelStore((s) => s.toggle);
   const timelineOpen = useTimelinePanelStore((s) => s.open);
   const selectedNodeId = useActiveSelectedNodeId();
-  // Either drawer occupies the same right slot. When a node is selected, the
-  // NodePanel takes priority over the (toggled) BrowserPanel.
-  const nodeDrawerOpen = selectedNodeId !== null;
+  const nodePanelOpen = useNodePanelStore((s) => s.open);
+  const hideNodePanel = useNodePanelStore((s) => s.hide);
+  // Either drawer occupies the same right slot. When the NodePanel has been
+  // opened for a selected node, it takes priority over the (toggled) BrowserPanel.
+  const nodeDrawerOpen = selectedNodeId !== null && nodePanelOpen;
   const rightDrawerOpen = nodeDrawerOpen || browserOpen;
   // The timeline panel sits on the far right edge. When open, the
   // NodePanel/BrowserPanel + the top-right control cluster shift inward by
@@ -52,6 +55,12 @@ export function CanvasPage({ ids }: CanvasPageProps) {
   const isSplit = ids.length === 2;
 
   useEffect(() => onOpenSettings(() => setShowSettings(true)), []);
+
+  // Deselecting (empty-canvas click, the panel's ×) closes the panel, so the
+  // next selection doesn't reopen it on its own.
+  useEffect(() => {
+    if (selectedNodeId === null) hideNodePanel();
+  }, [selectedNodeId, hideNodePanel]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

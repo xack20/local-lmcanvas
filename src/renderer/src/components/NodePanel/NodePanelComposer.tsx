@@ -29,6 +29,9 @@ import {
 } from "@/components/Canvas/SlashPicker";
 import { ModelBadge } from "@/components/Canvas/ModelBadge";
 import { PowerBadge } from "@/components/Canvas/PowerBadge";
+import { ClaudeEffortBadge } from "@/components/Canvas/ClaudeEffortBadge";
+import { BranchBadge } from "@/components/Canvas/BranchBadge";
+import { PlanBadge } from "@/components/Canvas/PlanBadge";
 import {
   filesToImageAttachments,
   imageFilesFromClipboard,
@@ -279,8 +282,11 @@ export function NodePanelComposer({
         >
           <ModelBadge nodeId={parentId} popoverSide="top" />
           <PowerBadge nodeId={parentId} popoverSide="top" />
+          <ClaudeEffortBadge nodeId={parentId} popoverSide="top" />
           <FolderBadge nodeId={parentId} popoverSide="top" />
+          <BranchBadge nodeId={parentId} popoverSide="top" />
           <FastBadge nodeId={parentId} />
+          <PlanBadge nodeId={parentId} />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}

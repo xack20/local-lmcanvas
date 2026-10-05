@@ -31,7 +31,7 @@ export function FastBadge({ nodeId }: Props) {
           "flex items-center gap-1 rounded-sm border bg-card text-foreground px-1.5 py-[5px] text-xs font-medium cursor-pointer transition-colors",
           "hover:bg-muted",
           chatOnly
-            ? "border-accent/60 bg-accent/15 ring-1 ring-accent/30 hover:bg-accent/25"
+            ? "border-accent-brand/60 bg-accent-brand/15 ring-1 ring-accent-brand/30 hover:bg-accent-brand/25"
             : "border-border",
         )}
         style={{ fontFamily: "var(--font-geist-pixel-square)" }}
@@ -45,7 +45,7 @@ export function FastBadge({ nodeId }: Props) {
         <Zap
           className={clsx(
             "w-[10px] h-[10px]",
-            chatOnly ? "text-accent" : "text-muted-foreground",
+            chatOnly ? "text-accent-brand" : "text-muted-foreground",
           )}
         />
         <span className="tracking-tight text-[8px] uppercase">fast</span>

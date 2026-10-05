@@ -59,12 +59,13 @@ export function FolderBadge({ nodeId, popoverSide }: Props) {
       overridden={overridden}
       ariaHasPopup="dialog"
       panelClassName="min-w-[240px]"
+      shrinkable
       label={
         <>
-          <Folder className="w-[10px] h-[10px] text-muted-foreground" />
+          <Folder className="w-[10px] h-[10px] shrink-0 text-muted-foreground" />
           <span
             className={clsx(
-              "tracking-tight text-[8px] max-w-[120px] truncate",
+              "tracking-tight text-[8px] max-w-[120px] min-w-0 truncate",
               !effectiveCwd && "italic text-muted-foreground",
             )}
           >
