@@ -15,6 +15,10 @@ export const CLIENT_HEADER = "x-lmc-client";
 export const HEARTBEAT_MS = 15_000;
 /** The browser only ever sends tiny frames (it never sends any today). */
 export const WS_MAX_PAYLOAD_BYTES = 4096;
+// Tailscale Serve reuses its connections to us; Node's 5 s default closes them
+// under it, which surfaces as sporadic 502s. Headers timeout must exceed keep-alive.
+export const KEEP_ALIVE_TIMEOUT_MS = 100_000;
+export const HEADERS_TIMEOUT_MS = 101_000;
 const COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 const LAST_SEQ_PATTERN = /^\d{1,16}$/;
@@ -397,6 +401,8 @@ export function createWebServer(deps: WebServerDeps): WebServer {
             else sendText(res, 500, "Internal error");
           });
         });
+        created.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+        created.headersTimeout = HEADERS_TIMEOUT_MS;
         created.on("upgrade", upgrade);
         created.on("error", reject);
         created.listen(port, "127.0.0.1", () => {
