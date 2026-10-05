@@ -1,6 +1,6 @@
 // src/main/claude/contextUsage.test.mjs
 import { describe, expect, test } from "bun:test";
-import { measureContext, toContextSnapshot } from "./contextUsage.ts";
+import { CONTEXT_MEASURE_TIMEOUT_MS, measureContext, toContextSnapshot } from "./contextUsage.ts";
 
 const USAGE = {
   totalTokens: 412_000, maxTokens: 1_000_000, percentage: 41.2, autoCompactThreshold: 950_000, isAutoCompactEnabled: true,
@@ -24,6 +24,11 @@ describe("toContextSnapshot", () => {
 });
 
 describe("measureContext", () => {
+  test("waits long enough for a cold Claude Code session", () => {
+    // Measured with the runner's options on Claude Code 2.1.289: 5.2 s cold, 1.3 s warm.
+    expect(CONTEXT_MEASURE_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+  });
+
   test("returns the snapshot", async () => {
     expect((await measureContext({ getContextUsage: async () => USAGE }, 100, () => 3))?.tokens).toBe(412_000);
   });

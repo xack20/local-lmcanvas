@@ -1,6 +1,7 @@
 import type { ContextSnapshot } from "@shared/types";
 
-export const CONTEXT_MEASURE_TIMEOUT_MS = 2_000;
+// Claude Code answers in about 1 s warm but took 5.2 s on a cold session; a miss falls back to an estimate.
+export const CONTEXT_MEASURE_TIMEOUT_MS = 15_000;
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
