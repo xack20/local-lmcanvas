@@ -10,7 +10,8 @@ export type TailscaleInfo = {
   httpsAvailable: boolean;
 };
 
-export type ServeState = { httpsInUse: boolean; proxiesTo: string | null };
+/** `funnel`: HTTPS on this host is shared publicly (Tailscale Funnel), not just with the tailnet. */
+export type ServeState = { httpsInUse: boolean; proxiesTo: string | null; funnel: boolean };
 export type Exec = (args: readonly string[]) => Promise<string>;
 
 export type TailscaleControl = {
@@ -51,7 +52,8 @@ export function parseServeStatus(raw: unknown, host: string): ServeState {
   const httpsInUse = asObject(config?.TCP)?.["443"] !== undefined;
   const site = asObject(asObject(config?.Web)?.[`${host}:443`]);
   const root = asObject(asObject(site?.Handlers)?.["/"]);
-  return { httpsInUse, proxiesTo: typeof root?.Proxy === "string" ? root.Proxy : null };
+  const funnel = asObject(config?.AllowFunnel)?.[`${host}:443`] === true;
+  return { httpsInUse, proxiesTo: typeof root?.Proxy === "string" ? root.Proxy : null, funnel };
 }
 
 export const serveTarget = (port: number): string => `http://127.0.0.1:${port}`;

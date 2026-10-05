@@ -42,14 +42,21 @@ describe("parseStatus", () => {
 
 describe("parseServeStatus", () => {
   test("empty config means HTTPS is free", () => {
-    expect(parseServeStatus({}, HOST)).toEqual({ httpsInUse: false, proxiesTo: null });
+    expect(parseServeStatus({}, HOST)).toEqual({ httpsInUse: false, proxiesTo: null, funnel: false });
   });
   test("recognises our own mapping", () => {
-    expect(parseServeStatus(OURS, HOST)).toEqual({ httpsInUse: true, proxiesTo: "http://127.0.0.1:4317" });
+    expect(parseServeStatus(OURS, HOST)).toEqual({ httpsInUse: true, proxiesTo: "http://127.0.0.1:4317", funnel: false });
   });
   test("someone else's HTTPS site counts as in use", () => {
     const other = { TCP: { 443: { HTTPS: true } }, Web: { [`${HOST}:443`]: { Handlers: { "/": { Path: "/srv" } } } } };
-    expect(parseServeStatus(other, HOST)).toEqual({ httpsInUse: true, proxiesTo: null });
+    expect(parseServeStatus(other, HOST)).toEqual({ httpsInUse: true, proxiesTo: null, funnel: false });
+  });
+  test("reports Funnel on HTTPS for this host", () => {
+    const public443 = { ...OURS, AllowFunnel: { [`${HOST}:443`]: true } };
+    expect(parseServeStatus(public443, HOST).funnel).toBe(true);
+    expect(parseServeStatus({ ...OURS, AllowFunnel: { [`${HOST}:8443`]: true } }, HOST).funnel).toBe(false);
+    expect(parseServeStatus({ ...OURS, AllowFunnel: { [`${HOST}:443`]: false } }, HOST).funnel).toBe(false);
+    expect(parseServeStatus({ ...OURS, AllowFunnel: "yes" }, HOST).funnel).toBe(false);
   });
 });
 

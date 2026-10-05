@@ -15,6 +15,7 @@ const PROBLEMS = {
     "HTTPS certificates are off for your Tailscale network. Turn on HTTPS in the Tailscale admin console (DNS page), then try again.",
   httpsTaken:
     "HTTPS on this Mac is already used by another Tailscale Serve setup, so LMCanvas won't replace it.",
+  funnel: "HTTPS on this Mac is shared publicly with Tailscale Funnel, so LMCanvas won't use it.",
   portBusy: (port: number) => `Port ${port} on this Mac is already in use.`,
 } as const;
 
@@ -117,6 +118,8 @@ export function createWebService(deps: WebServiceDeps): WebService {
       if (!info.host || !info.ownerLogin) return PROBLEMS.notSignedIn;
       if (!info.httpsAvailable) return PROBLEMS.noHttps;
       const serve = await deps.tailscale.serveState(info.host);
+      // A public (Funnel) mapping is never ours to reuse, even if it points at our port.
+      if (serve.funnel) return PROBLEMS.funnel;
       const ours = serve.proxiesTo === serveTarget(port);
       if (serve.httpsInUse && !ours) return PROBLEMS.httpsTaken;
       if (deps.server.port() === null) {

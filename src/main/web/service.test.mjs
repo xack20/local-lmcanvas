@@ -108,6 +108,8 @@ describe("createWebService", () => {
     ["HTTPS certificates off", { info: { running: true, host: HOST, ownerLogin: "me@example.com", httpsAvailable: false } }, "HTTPS certificates are off"],
     ["HTTPS taken by another Serve setup", { serve: { httpsInUse: true, proxiesTo: "http://127.0.0.1:9000" } }, "already used by another Tailscale Serve setup"],
     ["port busy", { portFree: false }, "Port 4317"],
+    ["HTTPS shared publicly with Funnel", { serve: { httpsInUse: true, proxiesTo: "http://127.0.0.1:9000", funnel: true } }, "shared publicly with Tailscale Funnel"],
+    ["our own mapping made public with Funnel", { serve: { httpsInUse: true, proxiesTo: OURS, funnel: true } }, "shared publicly with Tailscale Funnel"],
   ])("%s: stays off and says why", async (_label, opts, message) => {
     const h = harness(opts);
     const status = await h.service.setEnabled(true);
@@ -116,6 +118,13 @@ describe("createWebService", () => {
     expect(status.problem).toContain(message);
     expect(h.calls.find(([name]) => name === "enableServe")).toBeUndefined();
     expect(h.service.gateContext()).toBeNull();
+  });
+
+  test("a mapping made public with Funnel is never treated as ours", async () => {
+    const h = harness({ serve: { httpsInUse: true, proxiesTo: OURS, funnel: true } });
+    const status = await h.service.setEnabled(true);
+    expect(status.problem).toBe("HTTPS on this Mac is shared publicly with Tailscale Funnel, so LMCanvas won't use it.");
+    expect(h.calls).toEqual([]);
   });
 
   test("an existing mapping to our port is reused, not re-created", async () => {
