@@ -207,31 +207,66 @@ describe("createBrowserClientRegistry replay", () => {
     expect(second.messages).toEqual([]);
   });
 
-  test("keeps only the newest events by count, and a tab that needs a dropped one is not resumed", () => {
-    const { registry } = setup({ maxReplayEvents: 3 });
+  // Five events sent while the tab was away, with room for only the newest three.
+  const fiveWhileAway = () => {
+    const ctx = setup({ maxReplayEvents: 3 });
     const first = fakeSocket();
-    const { client } = registry.attach("tab1", "dev1", first, 0);
-    registry.detach("tab1", first);
+    const { client } = ctx.registry.attach("tab1", "dev1", first, 0);
+    ctx.registry.detach("tab1", first);
     for (let n = 1; n <= 5; n++) client.send("chat:event", { n });
+    return { ...ctx, client };
+  };
 
-    const behind = fakeSocket();
-    expect(registry.attach("tab1", "dev1", behind, 1)).toMatchObject({ resumed: false, seq: 5 });
-    expect(behind.messages).toEqual([]);
-
+  test("keeps only the newest events by count, and replays them to a tab that needs no more", () => {
+    const { registry } = fiveWhileAway();
     const justInTime = fakeSocket();
     expect(registry.attach("tab1", "dev1", justInTime, 2).resumed).toBe(true);
     expect(seqs(justInTime)).toEqual([3, 4, 5]);
   });
 
+  test("a tab that needs a dropped event is not resumed", () => {
+    const { registry } = fiveWhileAway();
+    const behind = fakeSocket();
+    expect(registry.attach("tab1", "dev1", behind, 1)).toMatchObject({ resumed: false, seq: 0 });
+    expect(behind.messages).toEqual([]);
+  });
+
   test("keeps only the newest events by size", () => {
-    const { registry } = setup({ maxReplayBytes: 300 });
-    const { client } = registry.attach("tab1", "dev1", fakeSocket(), 0);
-    for (let n = 1; n <= 4; n++) client.send("chat:event", { text: "x".repeat(60) });
-    const later = fakeSocket();
-    expect(registry.attach("tab1", "dev1", later, 0).resumed).toBe(false);
+    const sized = () => {
+      const ctx = setup({ maxReplayBytes: 300 });
+      const { client } = ctx.registry.attach("tab1", "dev1", fakeSocket(), 0);
+      for (let n = 1; n <= 4; n++) client.send("chat:event", { text: "x".repeat(60) });
+      return ctx.registry;
+    };
+    expect(sized().attach("tab1", "dev1", fakeSocket(), 0).resumed).toBe(false);
     const caughtUp = fakeSocket();
-    expect(registry.attach("tab1", "dev1", caughtUp, 2).resumed).toBe(true);
+    expect(sized().attach("tab1", "dev1", caughtUp, 2).resumed).toBe(true);
     expect(seqs(caughtUp)).toEqual([3, 4]);
+  });
+
+  test("a tab that can't be resumed ends its old client and starts a fresh one", () => {
+    const { registry, created, client } = fiveWhileAway();
+    let gone = 0;
+    client.onGone(() => gone++);
+
+    const behind = fakeSocket();
+    const fresh = registry.attach("tab1", "dev1", behind, 1);
+
+    expect(gone).toBe(1);
+    expect(client.isGone()).toBe(true);
+    expect(fresh.client).not.toBe(client);
+    expect(fresh.client.isGone()).toBe(false);
+    expect(fresh.seq).toBe(0);
+    expect(created).toEqual([client, fresh.client]);
+    expect(registry.get("tab1")).toBe(fresh.client);
+    fresh.client.send("chat:event", { n: 1 });
+    expect(seqs(behind)).toEqual([1]);
+  });
+
+  test("a resumable tab keeps its client", () => {
+    const { registry, client } = fiveWhileAway();
+    expect(registry.attach("tab1", "dev1", fakeSocket(), 2).client).toBe(client);
+    expect(client.isGone()).toBe(false);
   });
 
   test("a tab that saw more than this client ever sent belongs to an expired one and is not resumed", () => {

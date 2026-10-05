@@ -385,7 +385,7 @@ describe("live connection", () => {
     for (const after of ["abc", "-1", "1.5", "99999999999999999999"]) {
       const again = await open("tabws004", after);
       await settle();
-      expect(again.messages).toEqual([{ type: "welcome", resumed: false, seq: 1 }]);
+      expect(again.messages).toEqual([{ type: "welcome", resumed: false, seq: 0 }]);
       again.ws.close();
       await settle();
     }

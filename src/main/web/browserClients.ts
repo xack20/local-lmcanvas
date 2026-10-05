@@ -23,8 +23,8 @@ export type BrowserClientRegistry = {
   /**
    * `after` is the last event seq the tab processed (null when unreadable). The
    * tab is resumed, and sent every kept event after it, only when this client
-   * still has everything the tab is missing. `seq` is the last seq sent so far:
-   * a tab that isn't resumed continues counting from there.
+   * still has everything the tab is missing. Otherwise the old client is ended
+   * and the tab gets a fresh one. `seq` is the last seq sent so far.
    */
   attach(
     clientId: string,
@@ -171,10 +171,13 @@ export function createBrowserClientRegistry(opts: {
       return record.client;
     },
     attach(clientId, deviceId, socket, after = 0) {
-      const existing = sameDevice(clientId, deviceId);
-      const record = existing ?? create(clientId, deviceId);
+      const known = sameDevice(clientId, deviceId);
+      const resumed = known !== undefined && canResume(known.state, after);
+      // A tab that can't be resumed stops following its chats, so stop them here too
+      // (and free its questions and locks) rather than leave them running unseen.
+      if (known && !resumed) expire(clientId);
+      const record = known && resumed ? known : create(clientId, deviceId);
       const { state } = record;
-      const resumed = existing !== undefined && canResume(state, after);
       scheduler.clearTimeout(state.timer);
       state.timer = undefined;
       const oldSocket = state.socket;
