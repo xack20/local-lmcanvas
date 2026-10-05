@@ -15,6 +15,7 @@ import { ThinkingView } from "./blocks/ThinkingView";
 import { ImagePreviewModal } from "./ImagePreviewModal";
 import { ErrorBlock } from "./ErrorBlock";
 import { pickSuggestionIcons } from "@/lib/suggestionIcon";
+import { claudeModelLabel } from "@/lib/modelLabel";
 
 const MAX_TOOLS_PER_CHUNK = 5;
 
@@ -194,24 +195,18 @@ function ModelFallbackNotice({ fallback }: { fallback: ModelFallback }) {
       <span>
         {fallback.reason === "policy_refusal" ? (
           <>
-            {modelLabel(fallback.fromModel)} was blocked by Claude policy checks.
-            Retried automatically with {modelLabel(fallback.toModel)}.
+            {claudeModelLabel(fallback.fromModel)} was blocked by Claude policy checks.
+            Retried automatically with {claudeModelLabel(fallback.toModel)}.
           </>
         ) : (
           <>
-            Codex rerouted {modelLabel(fallback.fromModel)} to
-            {" "}{modelLabel(fallback.toModel)} for high-risk cyber safeguards.
+            Codex rerouted {fallback.fromModel} to
+            {" "}{fallback.toModel} for high-risk cyber safeguards.
           </>
         )}
       </span>
     </div>
   );
-}
-
-function modelLabel(model: string): string {
-  if (model === "claude-fable-5") return "Fable 5";
-  if (model === "claude-opus-4-8") return "Opus 4.8";
-  return model;
 }
 
 function SuggestionButtons({

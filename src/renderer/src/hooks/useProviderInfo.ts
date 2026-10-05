@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { PROVIDERS, type AppSettings, type Provider } from "@shared/types";
+import { claudeModelLabel } from "@/lib/modelLabel";
 
 export type ProviderInfoState = {
   provider: Provider;
@@ -55,28 +56,7 @@ export function useProviderInfo(canvasProvider?: Provider): ProviderInfoState {
 
 function prettyModelLabel(provider: Provider, modelId?: string): string {
   if (provider === "claude") {
-    if (!modelId) return "Fable 5";
-    if (modelId.includes("fable")) {
-      if (modelId.includes("5")) return "Fable 5";
-      return "Fable";
-    }
-    if (modelId.includes("opus")) {
-      if (modelId.includes("4-8")) return "Opus 4.8";
-      if (modelId.includes("4-7")) return "Opus 4.7";
-      if (modelId.includes("4-6")) return "Opus 4.6";
-      if (modelId.includes("4-5")) return "Opus 4.5";
-      return "Opus";
-    }
-    if (modelId.includes("sonnet")) {
-      if (modelId.includes("4-6")) return "Sonnet 4.6";
-      if (modelId.includes("4-5")) return "Sonnet 4.5";
-      return "Sonnet";
-    }
-    if (modelId.includes("haiku")) {
-      if (modelId.includes("4-5")) return "Haiku 4.5";
-      return "Haiku";
-    }
-    return modelId;
+    return claudeModelLabel(modelId || DEFAULT_MODEL_BY_PROVIDER.claude);
   }
   if (provider === "codex") {
     if (!modelId || modelId.length === 0) return "GPT-5.6 Sol";
