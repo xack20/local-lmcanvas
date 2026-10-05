@@ -186,6 +186,9 @@ export type ProviderAuthStatus = {
   detail?: string;
 };
 
+export type CanvasLockResult = { ok: true } | { ok: false; holderKind: "desktop" | "browser" };
+export type CanvasLockLostEvent = { canvasId: string };
+
 export type LmcApi = {
   canvases: {
     list(): Promise<CanvasSummary[]>;
@@ -249,6 +252,14 @@ export type LmcApi = {
   canvasName: {
     /** Generate an LLM-backed canvas name from the first prompt. Returns null on failure so the caller keeps its prompt-derived fallback. */
     generate(args: GenerateCanvasNameRequest): Promise<string | null>;
+  };
+  canvasLock: {
+    /** Claim a canvas for this window or tab; fails if another client holds it. */
+    acquire(canvasId: string): Promise<CanvasLockResult>;
+    /** Claim a canvas from whoever holds it; they are told via onLost. */
+    takeOver(canvasId: string): Promise<void>;
+    release(canvasId: string): Promise<void>;
+    onLost(handler: (ev: CanvasLockLostEvent) => void): () => void;
   };
 };
 

@@ -13,6 +13,7 @@ import { SearchButton } from "@/components/Canvas/SearchModal";
 import { InProgressNodesIndicator } from "@/components/Canvas/InProgressNodesIndicator";
 import { CanvasBreadcrumb } from "@/components/CanvasManager/CanvasBreadcrumb";
 import { DeleteNodeModal } from "@/components/Canvas/DeleteNodeModal";
+import { LockOverlay } from "./LockOverlay";
 import { SearchModalProvider } from "@/providers/SearchModalProvider";
 import { CommandPaletteProvider } from "@/providers/CommandPaletteProvider";
 import { closePane } from "@/lib/canvasNavigation";
@@ -72,6 +73,11 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
   const cwd = useCanvasStore((s) => s.cwd);
   const error = useCanvasStore((s) => s.error);
   const saving = useCanvasStore((s) => s.saving);
+  const lock = useCanvasStore((s) => s.lock);
+  const lockHolder = useCanvasStore((s) => s.lockHolder);
+  const takeOverLock = useCanvasStore((s) => s.takeOverLock);
+  const markLockLost = useCanvasStore((s) => s.markLockLost);
+  const releaseLock = useCanvasStore((s) => s.releaseLock);
   const nodes = useCanvasStore((s) => s.nodes);
   const nodeCount = Object.keys(nodes).length;
   const addNode = useCanvasStore((s) => s.addNode);
@@ -82,6 +88,12 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
   const centerOnNode = useCenterOnNode();
 
   const isActive = activePaneId === id;
+
+  useEffect(
+    () => window.api.canvasLock.onLost(({ canvasId: lost }) => markLockLost(lost)),
+    [markLockLost],
+  );
+  useEffect(() => () => releaseLock(), [releaseLock]);
 
   useEffect(() => {
     if (id && canvasId !== id) void loadCanvas(id);
@@ -171,6 +183,7 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
 
       <DeleteNodeModal />
       <BranchRequestListener paneId={id} />
+      <LockOverlay state={lock} holderKind={lockHolder} onTakeOver={() => void takeOverLock()} />
     </div>
   );
 }

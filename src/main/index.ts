@@ -30,6 +30,7 @@ import {
 import { createActiveChats } from "./api/activeChats";
 import { desktopClient, type Client } from "./api/client";
 import { bindRegistryToIpc, createApiRegistry } from "./api/registry";
+import { createCanvasLocks } from "./web/canvasLocks";
 import { getShellPath } from "./shellPath";
 import { initAutoUpdate, checkForUpdatesNow } from "./autoUpdate";
 import type {
@@ -100,6 +101,7 @@ function createWindow(hash?: string): BrowserWindow {
 }
 
 const activeChats = createActiveChats();
+const canvasLocks = createCanvasLocks();
 const watchedClients = new WeakSet<Client>();
 const api = createApiRegistry();
 
@@ -109,6 +111,7 @@ function watchClient(client: Client): Client {
   client.onGone(() => {
     activeChats.abortForClient(client);
     cancelAllForClient(client);
+    canvasLocks.releaseAll(client);
   });
   return client;
 }
@@ -162,7 +165,35 @@ function registerIpc(): void {
   api.handle("canvases:list", async () => listCanvases(), "shared");
   api.handle("canvases:create", async (_client, args: CanvasCreateArgs) => createCanvas(args), "shared");
   api.handle("canvases:read", async (_client, id: string) => readCanvas(id), "shared");
-  api.handle("canvases:write", async (_client, canvas: Canvas) => writeCanvas(canvas), "shared");
+  api.handle(
+    "canvases:write",
+    async (client, canvas: Canvas) => {
+      if (!canvasLocks.canWrite(canvas.id, client)) {
+        throw new Error("This chat is open on another device.");
+      }
+      return writeCanvas(canvas);
+    },
+    "shared",
+  );
+  api.handle(
+    "canvasLock:acquire",
+    async (client, canvasId: string) => canvasLocks.acquire(canvasId, client),
+    "shared",
+  );
+  api.handle(
+    "canvasLock:takeOver",
+    async (client, canvasId: string) => {
+      canvasLocks.takeOver(canvasId, client);
+    },
+    "shared",
+  );
+  api.handle(
+    "canvasLock:release",
+    async (client, canvasId: string) => {
+      canvasLocks.release(canvasId, client);
+    },
+    "shared",
+  );
   api.handle("canvases:delete", async (_client, id: string) => deleteCanvas(id), "shared");
 
   api.handle("settings:read", async () => readSettings(), "shared");

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AskUserRequest,
   AskUserResponsePayload,
+  CanvasLockLostEvent,
   ChatEvent,
   ChatStartArgs,
   GenerateCanvasNameRequest,
@@ -80,6 +81,16 @@ const api: LmcApi = {
   canvasName: {
     generate: (args: GenerateCanvasNameRequest) =>
       ipcRenderer.invoke("canvasName:generate", args),
+  },
+  canvasLock: {
+    acquire: (canvasId: string) => ipcRenderer.invoke("canvasLock:acquire", canvasId),
+    takeOver: (canvasId: string) => ipcRenderer.invoke("canvasLock:takeOver", canvasId),
+    release: (canvasId: string) => ipcRenderer.invoke("canvasLock:release", canvasId),
+    onLost: (handler: (ev: CanvasLockLostEvent) => void) => {
+      const listener = (_: Electron.IpcRendererEvent, ev: CanvasLockLostEvent) => handler(ev);
+      ipcRenderer.on("canvas:lockLost", listener);
+      return () => ipcRenderer.off("canvas:lockLost", listener);
+    },
   },
 };
 

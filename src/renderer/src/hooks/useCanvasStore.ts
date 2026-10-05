@@ -27,8 +27,9 @@ import {
   migrateMessage,
 } from "@shared/history";
 import { isUnnamedCanvasName, promptToCanvasName } from "@shared/canvasName";
-import type { Attachment } from "@shared/ipc";
+import type { Attachment, CanvasLockResult } from "@shared/ipc";
 import { getEdgeHandles } from "@/lib/edgeHandles";
+import type { CanvasLockState, LockHolderKind } from "@/lib/lockText";
 import { FALLBACK_NODE_HEIGHT, VERTICAL_CHILD_OFFSET } from "@/lib/canvasConstants";
 import { useRecentsStore } from "@/hooks/useRecentsStore";
 
@@ -49,6 +50,8 @@ export type CanvasStoreState = {
   dirty: Dirty;
   saving: boolean;
   error: string | null;
+  lock: CanvasLockState;
+  lockHolder: LockHolderKind;
   pendingPrefills: Record<NodeId, PendingPrefill>;
   searchHighlights: Map<NodeId, Set<string>>;
   setSearchHighlights: (nodeId: NodeId, textMatches: string[]) => void;
@@ -65,6 +68,9 @@ export type CanvasStoreState = {
   commitMerge: () => NodeId | null;
 
   loadCanvas: (id: string) => Promise<void>;
+  takeOverLock: () => Promise<void>;
+  markLockLost: (canvasId: string) => void;
+  releaseLock: () => void;
   setName: (name: string) => void;
   setProvider: (provider: Provider) => void;
   /** Merge a patch into `node.data.nodeSettings`. Per-node overrides for run settings. */
@@ -234,6 +240,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       dirty: { count: 0, lastChangeAt: 0 },
       saving: false,
       error: null,
+      lock: null,
+      lockHolder: null,
       pendingPrefills: {},
       searchHighlights: new Map(),
       merging: false,
@@ -316,6 +324,10 @@ export function createCanvasStoreApi(): CanvasStoreApi {
 
       loadCanvas: async (id: string) => {
         set({ loaded: false, error: null });
+        const previous = get().canvasId;
+        if (previous && previous !== id && get().lock === "held") {
+          void window.api.canvasLock.release(previous);
+        }
         let canvas: Canvas | null;
         let settings: AppSettings;
         try {
@@ -356,6 +368,9 @@ export function createCanvasStoreApi(): CanvasStoreApi {
             },
           };
         }
+        const lock = await window.api.canvasLock
+          .acquire(canvas.id)
+          .catch((): CanvasLockResult => ({ ok: true }));
         set({
           canvasId: canvas.id,
           name: canvas.name,
@@ -367,6 +382,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           nodes,
           edges: canvas.edges,
           loaded: true,
+          lock: lock.ok ? "held" : "conflict",
+          lockHolder: lock.ok ? null : lock.holderKind,
           dirty: { count: 0, lastChangeAt: 0 },
         });
         const prompt = isUnnamedCanvasName(canvas.name)
@@ -896,7 +913,25 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         get().markDirty();
       },
 
+      takeOverLock: async () => {
+        const id = get().canvasId;
+        if (!id) return;
+        await window.api.canvasLock.takeOver(id);
+        await get().loadCanvas(id);
+      },
+
+      markLockLost: (canvasId) => {
+        if (get().canvasId === canvasId) set({ lock: "lost", lockHolder: null });
+      },
+
+      releaseLock: () => {
+        const id = get().canvasId;
+        if (id && get().lock === "held") void window.api.canvasLock.release(id);
+        set({ lock: null });
+      },
+
       save: async () => {
+        if (get().lock !== "held") return;
         const canvas = canvasFromState(get());
         if (!canvas) return;
         set({ saving: true });
