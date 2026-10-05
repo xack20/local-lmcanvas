@@ -17,6 +17,7 @@ import { loadModelWindows, type ModelWindows } from "./claude/modelWindows";
 import { compactFocus, runCompaction } from "./claude/compaction";
 import { estimateTokens, fittedPrompt, planReplay, trimToFit } from "./claude/replayFit";
 import { summarizeForReplay } from "./claude/replaySummary";
+import { isPromptTooLongEvent, overflowRetryTarget } from "./claude/overflowRetry";
 import { DEFAULT_SETUP_TOKENS, DEFAULT_WINDOW } from "@shared/contextSize";
 import { claudeExecutable } from "./claude/runner";
 import { claudeEffortFor, claudeModelArg, resolveClaudeRun } from "@shared/claudeModels";
@@ -60,7 +61,7 @@ import type {
   GenerateGroupSummaryRequest,
   SlashItem,
 } from "@shared/ipc";
-import type { AppSettings, Canvas, Provider, ReasoningEffort } from "@shared/types";
+import type { AppSettings, Canvas, Provider, ProviderSessionRef, ReasoningEffort } from "@shared/types";
 import { CANVAS_LOCKED_MESSAGE } from "@shared/canvasLock";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -514,25 +515,29 @@ function registerIpc(): void {
       }
     };
 
+    // Set once an overflowed session was compacted: the retry resumes it with the bare prompt.
+    let retrySession: ProviderSessionRef | undefined;
     const runAttempt = async (
       attemptModel: string | undefined,
       reasoningEffort: ReasoningEffort | undefined,
       allowPolicyFallback: boolean,
-    ): Promise<boolean> => {
+      allowOverflowRetry: boolean,
+    ): Promise<{ policyRefused: boolean; overflowed: boolean }> => {
       const attemptController = new AbortController();
       const abortAttempt = () => attemptController.abort(controller.signal.reason);
       if (controller.signal.aborted) abortAttempt();
       else controller.signal.addEventListener("abort", abortAttempt, { once: true });
 
       let policyRefused = false;
+      let overflowed = false;
       try {
-        await runAgent(provider, agentPrompt, {
+        await runAgent(provider, retrySession ? prompt : agentPrompt, {
           cwd: effectiveCwd,
           model: attemptModel,
           reasoningEffort,
           serviceTier,
-          parentSession: compatibleParentSession,
-          currentSession: compatibleCurrentSession,
+          parentSession: retrySession ? undefined : compatibleParentSession,
+          currentSession: retrySession ?? compatibleCurrentSession,
           binPath,
           systemPrompt,
           attachments,
@@ -542,7 +547,13 @@ function registerIpc(): void {
           client,
           nodeId,
           onEvent: (ev) => {
-            if (policyRefused) return;
+            // An attempt being retried says nothing more, not even its final `done`.
+            if (policyRefused || overflowed) return;
+            if (allowOverflowRetry && isPromptTooLongEvent(ev)) {
+              overflowed = true;
+              attemptController.abort(new Error("Compacting the session and retrying."));
+              return;
+            }
             if (allowPolicyFallback && isPolicyRefusalEvent(ev)) {
               policyRefused = true;
               attemptController.abort(new Error("Retrying policy refusal with Opus 4.8."));
@@ -554,7 +565,7 @@ function registerIpc(): void {
       } finally {
         controller.signal.removeEventListener("abort", abortAttempt);
       }
-      return policyRefused;
+      return { policyRefused, overflowed };
     };
 
     try {
@@ -612,12 +623,13 @@ function registerIpc(): void {
           }
         }
       }
-      const policyRefused = await runAttempt(
+      const firstAttempt = await runAttempt(
         model,
         claudeRun ? claudeRun.reasoningEffort : requestedEffort,
         provider === "claude" && isFableModel(runModel),
+        provider === "claude",
       );
-      if (policyRefused && !controller.signal.aborted) {
+      if (firstAttempt.policyRefused && !controller.signal.aborted) {
         send({
           chatId,
           type: "model_fallback",
@@ -637,7 +649,34 @@ function registerIpc(): void {
           CLAUDE_FABLE_POLICY_FALLBACK_MODEL,
           claudeEffortFor(listedModels, CLAUDE_FABLE_POLICY_FALLBACK_MODEL, requestedEffort),
           false,
+          false,
         );
+      }
+      // Never fail on overflow: compact the session (or a fork of the parent's) once, then retry.
+      if (firstAttempt.overflowed && !controller.signal.aborted) {
+        const target = overflowRetryTarget({ current: compatibleCurrentSession, parent: compatibleParentSession });
+        if (!target) throw new Error("This conversation is too long for the model, and there's no session to compact.");
+        send({ chatId, type: "compacting", active: true });
+        try {
+          const compacted = await runCompaction({
+            executable: claudeExecutable(binPath),
+            sessionId: target.sessionId,
+            fork: target.fork,
+            model: claudeRun?.model,
+            cwd: effectiveCwd,
+            signal: controller.signal,
+          });
+          send({ chatId, type: "compacted", trigger: "auto", before: compacted.before, after: compacted.after });
+          retrySession = { provider: "claude", id: compacted.sessionId };
+        } catch (error) {
+          if (!controller.signal.aborted) {
+            const reason = error instanceof Error ? error.message : String(error);
+            throw new Error(`This conversation is too long for the model, and compacting it failed: ${reason}`);
+          }
+          // Stopped while compacting: the run below ends as any stopped chat does.
+          send({ chatId, type: "compacting", active: false });
+        }
+        await runAttempt(model, claudeRun ? claudeRun.reasoningEffort : requestedEffort, false, false);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

@@ -17,7 +17,11 @@ export type CompactionRequest = {
   cwd: string;
   queryFn?: typeof query;
   timeoutMs?: number;
+  /** The chat's stop signal, when compacting on a chat's behalf. */
+  signal?: AbortSignal;
 };
+
+const STOPPED_MESSAGE = "Compaction stopped.";
 
 export function compactFocus(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
@@ -34,8 +38,11 @@ function cleanSummary(raw: string): string | null {
 
 /** Runs Claude Code's /compact on a session (in place, or on a fork) and reports what changed. */
 export async function runCompaction(req: CompactionRequest): Promise<CompactResult> {
+  if (req.signal?.aborted) throw new Error(STOPPED_MESSAGE);
   const queryFn = req.queryFn ?? query;
   const controller = new AbortController();
+  const stop = (): void => controller.abort();
+  req.signal?.addEventListener("abort", stop, { once: true });
   let summary: string | null = null;
   const onPostCompact: HookCallback = async (input) => {
     if (input.hook_event_name === "PostCompact") summary = cleanSummary(input.compact_summary);
@@ -71,6 +78,7 @@ export async function runCompaction(req: CompactionRequest): Promise<CompactResu
   let compactError: string | null = null;
   try {
     for await (const msg of session as AsyncIterable<SDKMessage>) {
+      if (req.signal?.aborted) throw new Error(STOPPED_MESSAGE);
       const id = (msg as { session_id?: unknown }).session_id;
       if (typeof id === "string" && id.length > 0) sessionId = id;
       const event = mapSystemMessage(msg);
@@ -95,6 +103,7 @@ export async function runCompaction(req: CompactionRequest): Promise<CompactResu
     }
     throw new Error("Claude Code ended before compacting.");
   } finally {
+    req.signal?.removeEventListener("abort", stop);
     clearTimeout(timer);
     held.release();
     controller.abort();

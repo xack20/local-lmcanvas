@@ -42,6 +42,21 @@ describe("runCompaction", () => {
     expect(decision.behavior).toBe("deny");
   });
 
+  test("stops when the chat is stopped", async () => {
+    const stop = new AbortController();
+    let seenAbort = null;
+    const queryFn = ({ options }) => Object.assign((async function* () {
+      seenAbort = options.abortController.signal;
+      stop.abort();
+      yield BOUNDARY;
+      yield RESULT;
+    })(), { getContextUsage: async () => USAGE });
+    await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal })).rejects.toThrow("stopped");
+    expect(seenAbort.aborted).toBe(true);
+    const neverCalled = () => { throw new Error("should not start"); };
+    await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn: neverCalled, signal: stop.signal })).rejects.toThrow("stopped");
+  });
+
   test("in place resumes without forking", async () => {
     const { queryFn, seen } = fakeQuery([BOUNDARY, RESULT], { usage: USAGE });
     const out = await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn });
