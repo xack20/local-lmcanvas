@@ -1,5 +1,6 @@
 // .mjs keeps the bun:test import out of `bun run typecheck`.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { CANVAS_LOCKED_MESSAGE } from "../../../shared/canvasLock.ts";
 import { createCanvasStoreApi, makeBlankNode } from "./useCanvasStore.ts";
 
 const CANVAS_ID = "canvas-1";
@@ -205,3 +206,159 @@ describe("canvas store lock across unmount", () => {
     expect(log).toEqual(["write", `release ${CANVAS_ID}`]);
   });
 });
+
+// Each test uses its own canvas id: lock claims are shared by every store in a window.
+function claimStub(id, nodeCount = 1) {
+  const log = [];
+  const net = { failRead: false, readGate: null, acquireGate: null, refuseWrites: false };
+  const nodes = Array.from({ length: nodeCount }, (_, i) => makeBlankNode({ x: 0, y: i * 300 }));
+  const canvas = { id, name: "Notes", createdAt: 1, updatedAt: 1, nodes, edges: [] };
+  globalThis.window = {
+    api: {
+      canvases: {
+        read: async () => {
+          if (net.readGate) await net.readGate;
+          if (net.failRead) throw new TypeError("Failed to fetch");
+          return canvas;
+        },
+        write: async () => {
+          if (net.refuseWrites) throw new Error(CANVAS_LOCKED_MESSAGE);
+          log.push("write");
+        },
+      },
+      settings: { read: async () => ({}) },
+      canvasLock: {
+        acquire: async () => {
+          log.push(`acquire ${id}`);
+          if (net.acquireGate) await net.acquireGate;
+          return { ok: true };
+        },
+        release: async (canvasId) => {
+          log.push(`release ${canvasId}`);
+        },
+        takeOver: async () => {},
+      },
+    },
+    dispatchEvent: () => true,
+  };
+  return { log, net };
+}
+
+const gate = () => {
+  let open;
+  const promise = new Promise((resolve) => (open = resolve));
+  return { promise, open };
+};
+
+describe("canvas store lock claims", () => {
+  test("a load that fails drops its claim, so a later pane still releases the lock", async () => {
+    const { log, net } = claimStub("claim-a");
+    const failed = createCanvasStoreApi();
+    net.failRead = true;
+    await failed.getState().loadCanvas("claim-a");
+    expect(failed.getState().error).not.toBeNull();
+    failed.getState().releaseLock();
+
+    net.failRead = false;
+    const later = createCanvasStoreApi();
+    await later.getState().loadCanvas("claim-a");
+    later.getState().releaseLock();
+
+    expect(log).toEqual(["acquire claim-a", "release claim-a"]);
+  });
+
+  test("a pane that unmounts while reading never takes the lock, and a later pane still releases it", async () => {
+    const { log, net } = claimStub("claim-b");
+    const read = gate();
+    net.readGate = read.promise;
+    const racing = createCanvasStoreApi();
+    const loading = racing.getState().loadCanvas("claim-b");
+    racing.getState().releaseLock();
+    net.readGate = null;
+    read.open();
+    await loading;
+
+    expect(log).toEqual([]);
+    expect(racing.getState().lock).toBeNull();
+
+    const later = createCanvasStoreApi();
+    await later.getState().loadCanvas("claim-b");
+    later.getState().releaseLock();
+    expect(log).toEqual(["acquire claim-b", "release claim-b"]);
+  });
+
+  test("a pane that unmounts while acquiring releases the lock its late acquire took", async () => {
+    const { log, net } = claimStub("claim-b2");
+    const acquired = gate();
+    net.acquireGate = acquired.promise;
+    const racing = createCanvasStoreApi();
+    const loading = racing.getState().loadCanvas("claim-b2");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(log).toEqual(["acquire claim-b2"]);
+    racing.getState().releaseLock();
+    net.acquireGate = null;
+    acquired.open();
+    await loading;
+
+    expect(log).toEqual(["acquire claim-b2", "release claim-b2"]);
+    expect(racing.getState().lock).toBeNull();
+  });
+
+  test("a pane remounted while loading (React StrictMode) keeps the lock its second load took", async () => {
+    const { log, net } = claimStub("claim-strict");
+    const read = gate();
+    net.readGate = read.promise;
+    const store = createCanvasStoreApi();
+    const first = store.getState().loadCanvas("claim-strict");
+    store.getState().releaseLock();
+    const second = store.getState().loadCanvas("claim-strict");
+    net.readGate = null;
+    read.open();
+    await Promise.all([first, second]);
+
+    expect(store.getState().lock).toBe("held");
+    expect(store.getState().loaded).toBe(true);
+    expect(log.filter((entry) => entry.startsWith("release"))).toEqual([]);
+
+    store.getState().releaseLock();
+    expect(log.at(-1)).toBe("release claim-strict");
+  });
+
+  test("an unmounted pane taken over while two chats run drops its claim once the last chat settles, without releasing", async () => {
+    const { log, net } = claimStub("claim-c", 2);
+    const s1 = createCanvasStoreApi();
+    await s1.getState().loadCanvas("claim-c");
+    s1.getState().chatStarted("A");
+    s1.getState().chatStarted("B");
+    s1.getState().releaseLock();
+    net.refuseWrites = true;
+    s1.getState().chatSettled("A");
+    await s1.getState().save();
+    expect(s1.getState().lock).toBe("lost");
+    s1.getState().chatSettled("B");
+    await s1.getState().save();
+    expect(log).toEqual(["acquire claim-c"]);
+
+    net.refuseWrites = false;
+    const s2 = createCanvasStoreApi();
+    await s2.getState().loadCanvas("claim-c");
+    s2.getState().releaseLock();
+    expect(log).toEqual(["acquire claim-c", "acquire claim-c", "release claim-c"]);
+  });
+
+  test("a lock lost after unmount, with nothing left running, drops the claim at once", async () => {
+    const { log } = claimStub("claim-d");
+    const s1 = createCanvasStoreApi();
+    await s1.getState().loadCanvas("claim-d");
+    s1.getState().chatStarted("A");
+    s1.getState().releaseLock();
+    s1.getState().chatSettled("A");
+    s1.getState().markLockLost("claim-d");
+
+    const s2 = createCanvasStoreApi();
+    await s2.getState().loadCanvas("claim-d");
+    s2.getState().releaseLock();
+    expect(log).toEqual(["acquire claim-d", "acquire claim-d", "release claim-d"]);
+  });
+});
+

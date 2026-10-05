@@ -33,7 +33,7 @@ import { getEdgeHandles } from "@/lib/edgeHandles";
 import type { CanvasLockState, LockHolderKind } from "@/lib/lockText";
 import { FALLBACK_NODE_HEIGHT, VERTICAL_CHILD_OFFSET } from "@/lib/canvasConstants";
 import { useRecentsStore } from "@/hooks/useRecentsStore";
-import { claimCanvasLock, dropCanvasLockClaim } from "@/lib/lockClaims";
+import { createCanvasLockClaim, isCanvasLockClaimed, type CanvasLockClaim } from "@/lib/lockClaims";
 
 type Dirty = { count: number; lastChangeAt: number };
 
@@ -250,20 +250,37 @@ function isReplyRunning(s: CanvasStoreState): boolean {
   return s.runningChats.size > 0 || hasStreamingMessage(s.nodes);
 }
 
-/** Lets go of this store's use of the canvas lock; the Mac is told only when no other store here still uses it. */
-function letGoOfLock(canvasId: string, held: boolean, owner: object): void {
-  const last = dropCanvasLockClaim(canvasId, owner);
-  if (last && held) void window.api.canvasLock.release(canvasId);
+function releaseOnMac(canvasId: string): void {
+  window.api.canvasLock.release(canvasId).catch((error: unknown) => {
+    console.warn(`[canvases] couldn't release the lock on ${canvasId}:`, error);
+  });
 }
 
-function releaseLockNow(get: () => CanvasStoreState, set: SetCanvasState, owner: object): void {
-  const { canvasId, lock } = get();
-  if (canvasId) letGoOfLock(canvasId, lock === "held", owner);
-  set(lock === "held" ? { lock: null, releaseWhenIdle: false } : { releaseWhenIdle: false });
+/**
+ * Drops this store's claim. The Mac is told only when this store held the lock
+ * and no other store here still uses it: a lost or never-acquired lock isn't ours to release.
+ */
+function letGoOfLock(claim: CanvasLockClaim, held: boolean): void {
+  const releasable = claim.drop();
+  if (releasable !== null && held) releaseOnMac(releasable);
+}
+
+function releaseLockNow(get: () => CanvasStoreState, set: SetCanvasState, claim: CanvasLockClaim): void {
+  const held = get().lock === "held";
+  letGoOfLock(claim, held);
+  set(held ? { lock: null, releaseWhenIdle: false } : { releaseWhenIdle: false });
+}
+
+/** A pane that unmounted mid-reply and then lost its lock lets go of its claim once its chats end. */
+function finishDeferredRelease(get: () => CanvasStoreState, set: SetCanvasState, claim: CanvasLockClaim): void {
+  const s = get();
+  if (s.releaseWhenIdle && s.lock !== "held" && !isReplyRunning(s)) releaseLockNow(get, set, claim);
 }
 
 export function createCanvasStoreApi(): CanvasStoreApi {
-  const lockOwner = {};
+  const lockClaim = createCanvasLockClaim();
+  // Bumped by every load and by releaseLock, so a load the pane no longer wants can tell.
+  let loadGeneration = 0;
   return createStore<CanvasStoreState>()(
     subscribeWithSelector((set, get) => ({
       canvasId: null,
@@ -366,10 +383,12 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       },
 
       loadCanvas: async (id: string) => {
+        const generation = ++loadGeneration;
+        const isCurrent = (): boolean => generation === loadGeneration;
         set({ loaded: false, error: null, saveError: null });
-        const previous = get().canvasId;
-        if (previous && previous !== id) letGoOfLock(previous, get().lock === "held", lockOwner);
-        claimCanvasLock(id, lockOwner);
+        const previous = lockClaim.current();
+        if (previous !== null && previous !== id) letGoOfLock(lockClaim, get().lock === "held");
+        lockClaim.claim(id);
         let canvas: Canvas | null;
         let settings: AppSettings;
         try {
@@ -378,14 +397,18 @@ export function createCanvasStoreApi(): CanvasStoreApi {
             window.api.settings.read(),
           ]);
         } catch (error) {
+          if (!isCurrent()) return;
           console.error(`[canvases] failed to load ${id}:`, error);
+          letGoOfLock(lockClaim, false);
           set({
             error: "Unable to load this canvas. Its saved file may be damaged.",
             loaded: true,
           });
           return;
         }
+        if (!isCurrent()) return;
         if (!canvas) {
+          letGoOfLock(lockClaim, false);
           set({ error: `Failed to load canvas ${id}`, loaded: true });
           return;
         }
@@ -413,6 +436,12 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         const lock = await window.api.canvasLock
           .acquire(canvas.id)
           .catch((): CanvasLockResult => ({ ok: true }));
+        if (!isCurrent()) {
+          // The pane let go while this acquire was in flight: keep the lock only
+          // if another load or store in this window still uses it.
+          if (lock.ok && !isCanvasLockClaimed(canvas.id)) releaseOnMac(canvas.id);
+          return;
+        }
         set({
           canvasId: canvas.id,
           name: canvas.name,
@@ -968,15 +997,17 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         if (get().canvasId !== canvasId) return;
         set({ lock: "lost", lockHolder: null, lockReplyRunning: false });
         get().setSelectedNodeIds([]);
+        finishDeferredRelease(get, set, lockClaim);
       },
 
       releaseLock: () => {
+        loadGeneration += 1;
         const s = get();
         if (s.lock === "held" && isReplyRunning(s)) {
           set({ releaseWhenIdle: true });
           return;
         }
-        releaseLockNow(get, set, lockOwner);
+        releaseLockNow(get, set, lockClaim);
       },
 
       chatStarted: (chatId) => {
@@ -989,6 +1020,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
             ? { runningChats: new Set([...s.runningChats].filter((id) => id !== chatId)) }
             : s,
         );
+        finishDeferredRelease(get, set, lockClaim);
       },
 
       save: async () => {
@@ -1006,7 +1038,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           else set({ saveError: err instanceof Error ? err.message : String(err) });
         }
         // An unmounted pane has nothing left to retry with, so its last save lets go either way.
-        if (finalSave && get().releaseWhenIdle) releaseLockNow(get, set, lockOwner);
+        if (finalSave && get().releaseWhenIdle) releaseLockNow(get, set, lockClaim);
       },
     }))
   );
