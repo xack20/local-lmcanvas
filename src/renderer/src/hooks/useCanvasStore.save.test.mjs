@@ -82,6 +82,19 @@ describe("canvas store saving", () => {
     expect(store.getState().error).toBeNull();
   });
 
+  test("losing the lock clears a pending save error: there is nothing left to retry", async () => {
+    const { net } = stubApi();
+    await store.getState().loadCanvas(CANVAS_ID);
+    store.getState().setName("Renamed");
+    net.failWith = new TypeError("Failed to fetch");
+    await store.getState().save();
+    expect(store.getState().saveError).toBe("Failed to fetch");
+
+    store.getState().markLockLost(CANVAS_ID);
+
+    expect(store.getState().saveError).toBeNull();
+  });
+
   test("loading a canvas starts with no save error", async () => {
     const { net } = stubApi();
     await store.getState().loadCanvas(CANVAS_ID);

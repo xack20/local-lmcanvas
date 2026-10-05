@@ -34,7 +34,9 @@ export function startSaveScheduler(store: CanvasStoreApi, opts: SaveSchedulerOpt
   const flush = async (): Promise<void> => {
     await store.getState().save();
     if (stopped) return;
-    if (store.getState().saveError === null) {
+    const { lock, saveError } = store.getState();
+    // Nothing to retry once a save went through, or once the lock is gone (nothing can save).
+    if (saveError === null || lock !== "held") {
       failures = 0;
       return;
     }
@@ -56,7 +58,8 @@ export function startSaveScheduler(store: CanvasStoreApi, opts: SaveSchedulerOpt
     () => schedule(opts.delayMs),
   );
   const unsubscribeReconnect = opts.onReconnect(() => {
-    if (store.getState().dirty.count > 0) schedule(0);
+    const { lock, dirty } = store.getState();
+    if (lock === "held" && dirty.count > 0) schedule(0);
   });
 
   return () => {

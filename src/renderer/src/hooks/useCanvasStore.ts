@@ -995,7 +995,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
 
       markLockLost: (canvasId) => {
         if (get().canvasId !== canvasId) return;
-        set({ lock: "lost", lockHolder: null, lockReplyRunning: false });
+        set({ lock: "lost", lockHolder: null, lockReplyRunning: false, saveError: null });
         get().setSelectedNodeIds([]);
         finishDeferredRelease(get, set, lockClaim);
       },

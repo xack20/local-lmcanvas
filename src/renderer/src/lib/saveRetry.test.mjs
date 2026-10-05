@@ -124,6 +124,36 @@ describe("startSaveScheduler", () => {
     expect(store.getState().saveError).toBeNull();
   });
 
+  test("stops retrying once the lock is lost", async () => {
+    const { net } = stubApi();
+    await store.getState().loadCanvas("canvas-1");
+    start();
+    net.failing = true;
+    store.getState().setName("One");
+    await timers.advance(DELAY_MS);
+    expect(timers.pending()).toBe(1);
+
+    store.getState().markLockLost("canvas-1");
+    await timers.advance(SAVE_RETRY_MS);
+
+    expect(timers.pending()).toBe(0);
+  });
+
+  test("a reconnect while the lock isn't held schedules nothing", async () => {
+    const { net } = stubApi();
+    await store.getState().loadCanvas("canvas-1");
+    start();
+    net.failing = true;
+    store.getState().setName("One");
+    await timers.advance(DELAY_MS);
+    store.getState().markLockLost("canvas-1");
+    await timers.advance(SAVE_RETRY_MS);
+
+    reconnected();
+
+    expect(timers.pending()).toBe(0);
+  });
+
   test("a reconnect with nothing unsaved saves nothing", async () => {
     const { writes } = stubApi();
     await store.getState().loadCanvas("canvas-1");
