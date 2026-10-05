@@ -692,6 +692,8 @@ function registerIpc(): void {
           });
           send({ chatId, type: "compacted", trigger: "auto", before: compacted.before, after: compacted.after });
           retrySession = { provider: "claude", id: compacted.sessionId };
+          // The node adopts the compacted session now: a stopped retry never reports it itself.
+          send({ chatId, type: "session", session: retrySession });
         } catch (error) {
           if (!controller.signal.aborted) {
             const reason = error instanceof Error ? error.message : String(error);

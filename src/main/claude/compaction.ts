@@ -7,6 +7,7 @@ import { heldOpenPrompt } from "./heldOpenPrompt";
 import { mapSystemMessage } from "./systemEvents";
 
 const COMPACTION_TIMEOUT_MS = 10 * 60_000;
+const COMPACTION_TIMED_OUT_MESSAGE = "Compaction took too long and was stopped.";
 
 export type CompactionRequest = {
   executable?: string;
@@ -68,16 +69,28 @@ export async function runCompaction(req: CompactionRequest): Promise<CompactResu
       abortController: controller,
     },
   });
-  const timer = setTimeout(() => controller.abort(), req.timeoutMs ?? COMPACTION_TIMEOUT_MS);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, req.timeoutMs ?? COMPACTION_TIMEOUT_MS);
   let sessionId = req.sessionId;
   let before: number | null = null;
   let after: number | null = null;
   let compacted = false;
   // A refused /compact still ends in a "success" result; its status message carries the reason.
   let compactError: string | null = null;
+  // Once Claude Code has reported the compaction the session is rewritten and can't be undone, so
+  // however the run ends from then on (Stop, the time limit, an error) the compaction is kept,
+  // just without a new size. Before that point nothing has changed.
+  const kept = (): CompactResult => ({ sessionId, before, after, summary, context: null });
+  const interrupted = (): CompactResult => {
+    if (compacted) return kept();
+    throw new Error(req.signal?.aborted ? COMPACTION_STOPPED_MESSAGE : COMPACTION_TIMED_OUT_MESSAGE);
+  };
   try {
     for await (const msg of session as AsyncIterable<SDKMessage>) {
-      if (req.signal?.aborted) throw new Error(COMPACTION_STOPPED_MESSAGE);
+      // Read the message before honouring a Stop: a compaction already reported still counts.
       const id = (msg as { session_id?: unknown }).session_id;
       if (typeof id === "string" && id.length > 0) sessionId = id;
       const event = mapSystemMessage(msg);
@@ -87,25 +100,28 @@ export async function runCompaction(req: CompactionRequest): Promise<CompactResu
         before = event.before;
         after = event.after;
       }
+      if (req.signal?.aborted || timedOut) return interrupted();
       if (msg.type === "result") {
         if (msg.is_error || msg.subtype !== "success") {
+          if (compacted) return kept();
           const errors = "errors" in msg && Array.isArray(msg.errors) ? msg.errors.join("\n") : msg.subtype;
           throw new Error(errors || "Compaction failed");
         }
         if (!compacted) throw new Error(compactError ?? "Claude Code didn't compact this session.");
+        // A Stop or the time limit now kills Claude Code, so the measurement just comes back empty.
         const context = await measureContext(session);
-        // Stop can land while the new size is being measured; the result must not be applied then.
-        if (req.signal?.aborted) throw new Error(COMPACTION_STOPPED_MESSAGE);
         const usage = normalizeUsage((msg as { usage?: unknown }).usage, {
           totalCostUsd: (msg as { total_cost_usd?: unknown }).total_cost_usd,
         });
         return { sessionId, before, after, summary, context, ...(usage ? { usage } : {}) };
       }
     }
+    if (compacted) return kept();
     throw new Error("Claude Code ended before compacting.");
   } catch (error) {
-    // Stopping kills Claude Code, and the SDK then throws its own abort error.
-    if (req.signal?.aborted) throw new Error(COMPACTION_STOPPED_MESSAGE);
+    // Stopping or timing out kills Claude Code, and the SDK then throws its own abort error.
+    if (req.signal?.aborted || timedOut) return interrupted();
+    if (compacted) return kept();
     throw error;
   } finally {
     req.signal?.removeEventListener("abort", stop);

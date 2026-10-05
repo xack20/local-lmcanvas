@@ -49,6 +49,7 @@ describe("runCompaction", () => {
     const queryFn = ({ options }) => Object.assign((async function* () {
       seenAbort = options.abortController.signal;
       stop.abort();
+      yield { type: "system", subtype: "init", session_id: "s2" };
       yield BOUNDARY;
       yield RESULT;
     })(), { getContextUsage: async () => USAGE });
@@ -67,13 +68,69 @@ describe("runCompaction", () => {
     await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal })).rejects.toThrow(COMPACTION_STOPPED_MESSAGE);
   });
 
-  test("a stop that lands while the new size is being measured is still a stop", async () => {
+  test("a stop after Claude Code finished compacting keeps the compaction, without a new size", async () => {
+    // The session is already compacted by then; throwing the result away would leave the node wrong.
     const stop = new AbortController();
     const queryFn = () => Object.assign((async function* () {
       yield BOUNDARY;
       yield RESULT;
-    })(), { getContextUsage: async () => { stop.abort(); return USAGE; } });
-    await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal })).rejects.toThrow(COMPACTION_STOPPED_MESSAGE);
+    })(), { getContextUsage: async () => { stop.abort(); throw new Error("Claude Code process aborted by user"); } });
+    const out = await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal });
+    expect(out).toMatchObject({ sessionId: "s2", before: 412_000, after: 38_000, context: null });
+  });
+
+  test("a stop after Claude Code reported the compaction, before its final result, keeps the compaction", async () => {
+    const stop = new AbortController();
+    const queryFn = () => Object.assign((async function* () {
+      yield BOUNDARY;
+      stop.abort();
+      throw new Error("Claude Code process aborted by user");
+    })(), { getContextUsage: async () => USAGE });
+    const out = await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal });
+    expect(out).toMatchObject({ sessionId: "s2", before: 412_000, after: 38_000, context: null });
+  });
+
+  test("a stop between the compaction and the next message keeps the compaction too", async () => {
+    const stop = new AbortController();
+    const queryFn = () => Object.assign((async function* () {
+      yield BOUNDARY;
+      stop.abort();
+      yield RESULT;
+    })(), { getContextUsage: async () => USAGE });
+    const out = await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal });
+    expect(out).toMatchObject({ sessionId: "s2", before: 412_000, after: 38_000, context: null });
+  });
+
+  test("a compaction Claude Code reported just before a Stop counts, even if it is read after it", async () => {
+    const stop = new AbortController();
+    const queryFn = () => Object.assign((async function* () {
+      stop.abort();
+      yield BOUNDARY;
+      throw new Error("Claude Code process aborted by user");
+    })(), { getContextUsage: async () => USAGE });
+    const out = await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal });
+    expect(out).toMatchObject({ sessionId: "s2", before: 412_000, after: 38_000, context: null });
+  });
+
+  test("once Claude Code has compacted, any other ending keeps the compaction", async () => {
+    const endings = [
+      async function* () { yield BOUNDARY; },
+      async function* () { yield BOUNDARY; yield { type: "result", subtype: "error_during_execution", is_error: true, errors: ["boom"] }; },
+      async function* () { yield BOUNDARY; throw new Error("Claude Code crashed"); },
+    ];
+    for (const ending of endings) {
+      const queryFn = () => Object.assign(ending(), { getContextUsage: async () => USAGE });
+      const out = await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn });
+      expect(out).toMatchObject({ sessionId: "s2", before: 412_000, after: 38_000, context: null });
+    }
+  });
+
+  test("running past the time limit says so, rather than looking like a stop", async () => {
+    const queryFn = ({ options }) => Object.assign((async function* () {
+      await new Promise((_, reject) => options.abortController.signal.addEventListener("abort", () => reject(new Error("Claude Code process aborted by user"))));
+      yield RESULT;
+    })(), { getContextUsage: async () => USAGE });
+    await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, timeoutMs: 5 })).rejects.toThrow("took too long");
   });
 
   test("in place resumes without forking", async () => {
