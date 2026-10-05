@@ -1,6 +1,6 @@
 // src/main/claude/contextUsage.test.mjs
 import { describe, expect, test } from "bun:test";
-import { CONTEXT_MEASURE_TIMEOUT_MS, measureContext, toContextSnapshot } from "./contextUsage.ts";
+import { CONTEXT_MEASURE_TIMEOUT_MS, measureContext, measuresAfter, toContextSnapshot } from "./contextUsage.ts";
 
 const USAGE = {
   totalTokens: 412_000, maxTokens: 1_000_000, percentage: 41.2, autoCompactThreshold: 950_000, isAutoCompactEnabled: true,
@@ -39,5 +39,13 @@ describe("measureContext", () => {
   });
   test("a failing call is null, not a throw", async () => {
     expect(await measureContext({ getContextUsage: async () => { throw new Error("closed"); } }, 100)).toBeNull();
+  });
+});
+
+describe("measuresAfter", () => {
+  test("measures after a finished run, never after a failed one (errors, fallbacks and retries mustn't wait)", () => {
+    expect(measuresAfter({ type: "result", subtype: "success", is_error: false })).toBe(true);
+    expect(measuresAfter({ type: "result", subtype: "success", is_error: true })).toBe(false);
+    expect(measuresAfter({ type: "result", subtype: "error_during_execution", is_error: true })).toBe(false);
   });
 });

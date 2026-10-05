@@ -109,7 +109,7 @@ import {
   type RunnerEvent,
 } from "../agents/types";
 import { normalizeUsage } from "../agents/usage";
-import { measureContext } from "./contextUsage";
+import { measureContext, measuresAfter } from "./contextUsage";
 import { heldOpenPrompt } from "./heldOpenPrompt";
 import { mapSystemMessage } from "./systemEvents";
 
@@ -273,7 +273,7 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
       }
       const systemEvent = mapSystemMessage(msg);
       if (systemEvent) emit(systemEvent);
-      if (msg.type === "result") {
+      if (msg.type === "result" && measuresAfter(msg)) {
         const context = await measureContext(q);
         if (context) emit({ kind: "context", context });
       }

@@ -52,3 +52,9 @@ export async function measureContext(
     clearTimeout(timer);
   }
 }
+
+/** Only a successful run is measured: after an error the size doesn't matter, and the error,
+ *  a model fallback or an overflow retry shouldn't wait for it. */
+export function measuresAfter(result: { subtype?: unknown; is_error?: unknown }): boolean {
+  return result.subtype === "success" && result.is_error !== true;
+}
