@@ -15,6 +15,8 @@ export const HORIZONTAL_PADDING = 50;
 export const RIGHT_LANE_GAP_MULTIPLIER = 2;
 export const RIGHT_LANE_X_OFFSET =
   NODE_WIDTH + HORIZONTAL_PADDING * RIGHT_LANE_GAP_MULTIPLIER;
+// A right-lane child with no cursor or selection to follow sits this far below its parent's top.
+export const RIGHT_LANE_Y_OFFSET = 30;
 
 export const VERTICAL_CHILD_OFFSET = 150;
 

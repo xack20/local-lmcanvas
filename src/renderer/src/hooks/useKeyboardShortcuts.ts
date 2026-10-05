@@ -1,5 +1,10 @@
 import { useEffect, type RefObject } from "react";
+import { useStoreApi } from "@xyflow/react";
+import { FALLBACK_NODE_HEIGHT, NODE_WIDTH } from "@/lib/canvasConstants";
+import { keyboardBranchPosition } from "@/lib/childPlacement";
+import { makeDomHeightMeasurer, resolveCollisions } from "@/lib/collisionResolution";
 import { useCanvasStore, useCanvasStoreApi, makeBlankNode } from "./useCanvasStore";
+import { useCenterOnNode } from "./useCenterOnNode";
 import { useConfirmDeleteStore } from "./useConfirmDeleteStore";
 import { useIsActivePane } from "./useActivePane";
 
@@ -10,6 +15,9 @@ export function useKeyboardShortcuts(
   const storeApi = useCanvasStoreApi();
   const addNode = useCanvasStore((s) => s.addNode);
   const connectEdge = useCanvasStore((s) => s.connectEdge);
+  const movePosition = useCanvasStore((s) => s.movePosition);
+  const flowStore = useStoreApi();
+  const centerOnNode = useCenterOnNode();
   const requestDelete = useConfirmDeleteStore((s) => s.request);
 
   useEffect(() => {
@@ -58,13 +66,33 @@ export function useKeyboardShortcuts(
         const state = storeApi.getState();
         const parent = state.nodes[id];
         if (!parent) return;
-        const offsetY = (parent.data.chat.childIds.length ?? 0) * 40;
-        const child = makeBlankNode(
-          { x: parent.position.x + 480, y: parent.position.y + offsetY },
-          id
-        );
+        const child = makeBlankNode(keyboardBranchPosition(parent), id);
         addNode(child);
         connectEdge(id, child.id);
+        // After the child mounts, push any sibling it lands on (the parent
+        // never moves), then bring the child into view at the current zoom.
+        // Keyboard focus stays put so repeated ⌘+B keeps adding siblings.
+        requestAnimationFrame(() => {
+          const zoom = flowStore.getState().transform[2];
+          const measure = makeDomHeightMeasurer(zoom);
+          const moves = resolveCollisions(child.id, storeApi.getState().nodes, measure, {
+            fixedWidth: NODE_WIDTH,
+            excludeIds: [id],
+          });
+          for (const movedId of Object.keys(moves)) {
+            movePosition(movedId, moves[movedId]);
+          }
+          const placed = storeApi.getState().nodes[child.id];
+          if (placed) {
+            centerOnNode(
+              placed.position.x,
+              placed.position.y,
+              NODE_WIDTH,
+              measure(child.id) || FALLBACK_NODE_HEIGHT,
+              zoom,
+            );
+          }
+        });
       }
 
       // Backspace / Delete → open in-app confirmation modal (but NOT when typing)
@@ -84,5 +112,15 @@ export function useKeyboardShortcuts(
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isActive, containerRef, addNode, connectEdge, requestDelete, storeApi]);
+  }, [
+    isActive,
+    containerRef,
+    addNode,
+    connectEdge,
+    movePosition,
+    flowStore,
+    centerOnNode,
+    requestDelete,
+    storeApi,
+  ]);
 }

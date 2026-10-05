@@ -4,6 +4,7 @@ import {
   FALLBACK_NODE_HEIGHT,
   NODE_WIDTH,
   RIGHT_LANE_X_OFFSET,
+  RIGHT_LANE_Y_OFFSET,
   VERTICAL_CHILD_OFFSET,
 } from "@/lib/canvasConstants";
 import {
@@ -91,7 +92,7 @@ export function useBranchFromNode(parentId: string): BranchFn {
           // connector emerges from the selected text instead of a fixed handle.
           sourceYOffset = projected.y - parentPos.y;
         } else {
-          position = { x, y: parentPos.y + 30 };
+          position = { x, y: parentPos.y + RIGHT_LANE_Y_OFFSET };
         }
       } else {
         position = {
