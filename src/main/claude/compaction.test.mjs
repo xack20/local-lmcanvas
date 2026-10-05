@@ -33,6 +33,15 @@ describe("runCompaction", () => {
     expect(first.value.message.content).toBe("/compact keep X");
   });
 
+  test("never lets Claude Code use a tool while it compacts", async () => {
+    const { queryFn, seen } = fakeQuery([BOUNDARY, RESULT], { usage: USAGE });
+    await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn });
+    expect(seen.options.permissionMode).not.toBe("bypassPermissions");
+    expect(seen.options.allowDangerouslySkipPermissions).toBeUndefined();
+    const decision = await seen.options.canUseTool("Bash", { command: "ls" }, { signal: new AbortController().signal, toolUseID: "t1" });
+    expect(decision.behavior).toBe("deny");
+  });
+
   test("in place resumes without forking", async () => {
     const { queryFn, seen } = fakeQuery([BOUNDARY, RESULT], { usage: USAGE });
     const out = await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn });

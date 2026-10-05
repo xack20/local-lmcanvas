@@ -54,8 +54,9 @@ export async function runCompaction(req: CompactionRequest): Promise<CompactResu
       model: req.model,
       resume: req.sessionId,
       ...(req.fork ? { forkSession: true } : {}),
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
+      // /compact needs no tools, so none are allowed (a browser tab can ask for this too).
+      permissionMode: "default",
+      canUseTool: async () => ({ behavior: "deny", message: "Tools are off while compacting." }),
       settingSources: ["user", "project"],
       hooks: { PostCompact: [{ hooks: [onPostCompact] }] },
       abortController: controller,
