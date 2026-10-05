@@ -19,6 +19,7 @@ import { useNodePanelStore } from "@/hooks/useNodePanelStore";
 import { usePreferencesStore } from "@/hooks/usePreferencesStore";
 import { onOpenSettings } from "@/lib/openSettings";
 import { matchesShortcut } from "@/lib/shortcut";
+import { isBrowser } from "@/lib/webBridge";
 
 type CanvasPageProps = {
   ids: [string] | [string, string];
@@ -105,17 +106,19 @@ export function CanvasPage({ ids }: CanvasPageProps) {
             : (isSplit ? 48 : 12) + timelineOffset,
         }}
       >
-        <button
-          onClick={toggleBrowser}
-          className={`flex h-7 w-7 items-center justify-center rounded-md cursor-pointer ${
-            browserOpen
-              ? "bg-muted text-foreground"
-              : "text-foreground/70 hover:text-foreground hover:bg-muted"
-          }`}
-          title={browserOpen ? "hide browser" : "show browser"}
-        >
-          <Globe size={14} />
-        </button>
+        {!isBrowser && (
+          <button
+            onClick={toggleBrowser}
+            className={`flex h-7 w-7 items-center justify-center rounded-md cursor-pointer ${
+              browserOpen
+                ? "bg-muted text-foreground"
+                : "text-foreground/70 hover:text-foreground hover:bg-muted"
+            }`}
+            title={browserOpen ? "hide browser" : "show browser"}
+          >
+            <Globe size={14} />
+          </button>
+        )}
         <button
           onClick={() => setShowSettings(true)}
           className="flex h-7 w-7 items-center justify-center rounded-md text-foreground/70 hover:text-foreground hover:bg-muted cursor-pointer"
@@ -163,7 +166,7 @@ export function CanvasPage({ ids }: CanvasPageProps) {
           width={nodePanelWidth}
           onWidthChange={setNodePanelWidth}
         />
-      ) : (
+      ) : isBrowser ? null : (
         <BrowserPanel rightOffset={timelineOffset} />
       )}
 

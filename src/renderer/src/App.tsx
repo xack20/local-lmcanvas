@@ -5,6 +5,8 @@ import { OnboardingPage } from "./pages/OnboardingPage";
 import { subscribeAskUserRequests } from "./hooks/useAskUserStore";
 import { useApplyTheme } from "./hooks/useApplyTheme";
 import { useRecentsStore } from "./hooks/useRecentsStore";
+import { isBrowser } from "@/lib/webBridge";
+import { WebChrome } from "@/components/web/WebChrome";
 
 type Route =
   | { name: "home" }
@@ -66,7 +68,18 @@ export function App() {
 
   useApplyTheme();
 
-  if (route.name === "canvas") return <CanvasPage ids={route.ids} />;
-  if (route.name === "onboarding") return <OnboardingPage />;
-  return <HomePage />;
+  const page =
+    route.name === "canvas" ? (
+      <CanvasPage ids={route.ids} />
+    ) : route.name === "onboarding" ? (
+      <OnboardingPage />
+    ) : (
+      <HomePage />
+    );
+  return (
+    <>
+      {page}
+      {isBrowser && <WebChrome />}
+    </>
+  );
 }
