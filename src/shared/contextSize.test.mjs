@@ -1,6 +1,6 @@
 // src/shared/contextSize.test.mjs — .mjs keeps bun:test out of typecheck.
 import { describe, expect, test } from "bun:test";
-import { compactionText, contextLabel, contextLevel, contextView, formatTokens } from "./contextSize.ts";
+import { compactionText, contextBaseFor, contextLabel, contextLevel, contextView, formatTokens } from "./contextSize.ts";
 
 const ctx = (tokens, extra = {}) => ({ tokens, window: 1_000_000, autoCompactEnabled: true, exact: true, measuredAt: 1, ...extra });
 const node = (id, parentIds, context, messages = []) => ({
@@ -116,5 +116,53 @@ describe("contextView on big canvases", () => {
     const started = performance.now();
     for (const id of ids) contextView(id, nodes);
     expect(performance.now() - started).toBeLessThan(25);
+  });
+});
+
+describe("own size around compactions", () => {
+  const at = (role, t, createdAt, blocks) => ({ id: `${role}-${createdAt}`, role, createdAt, blocks: blocks ?? [{ type: "text", text: t }] });
+  const compacted = (when) => ({ type: "compaction", trigger: "manual", before: 38_000, after: 7_000, ...(when ? { at: when } : {}) });
+
+  test("a child keeps its own size after its parent is compacted in place", () => {
+    const nodes = {
+      root: node("root", [], ctx(37_000)),
+      two: node("two", ["root"], ctx(28_000), [at("user", "q", 50), at("assistant", "", 51, [{ type: "text", text: "a" }, compacted(200)])]),
+      three: node("three", ["two"], ctx(39_000, { base: 38_000 }), [at("user", "q", 100), at("assistant", "a", 101)]),
+    };
+    const view = contextView("three", nodes);
+    expect(view.own).toBe(1_000);
+    expect(view.compactions).toBe(0);
+  });
+
+  test("a child that ran after its parent's compaction counts it", () => {
+    const nodes = {
+      root: node("root", [], ctx(37_000)),
+      two: node("two", ["root"], ctx(28_000), [at("user", "q", 50), at("assistant", "", 51, [compacted(200)])]),
+      four: node("four", ["two"], ctx(29_000, { base: 28_000 }), [at("user", "q", 300), at("assistant", "a", 301)]),
+    };
+    expect(contextView("four", nodes).compactions).toBe(1);
+  });
+
+  test("a node whose own reply compacted owns everything it holds", () => {
+    const nodes = {
+      parent: node("parent", [], ctx(39_000)),
+      summary: node("summary", ["parent"], ctx(29_000), [at("user", "Continue from summary", 5), at("assistant", "", 5, [compacted(), { type: "text", text: "sum" }])]),
+    };
+    const view = contextView("summary", nodes);
+    expect(view.own).toBe(29_000);
+    expect(contextLabel(view)).toBe("+29k · 29k");
+  });
+
+  test("the base a run starts from is its largest measured parent", () => {
+    const nodes = {
+      a: node("a", [], ctx(30_000)),
+      b: node("b", [], ctx(45_000)),
+      merge: node("merge", ["a", "b"], undefined),
+      loose: node("loose", [], undefined),
+      unmeasuredChild: node("unmeasuredChild", ["loose"], undefined),
+    };
+    expect(contextBaseFor("merge", nodes)).toBe(45_000);
+    expect(contextBaseFor("a", nodes)).toBeUndefined();
+    expect(contextBaseFor("unmeasuredChild", nodes)).toBeUndefined();
   });
 });

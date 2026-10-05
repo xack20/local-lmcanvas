@@ -60,7 +60,7 @@ function parentsOf(node: CanvasNode, nodes: Nodes): CanvasNode[] {
 // Badges re-size every node on every store change; messages are immutable, so their sizes are cached.
 const messageChars = new WeakMap<Message, number>();
 const messagesTokens = new WeakMap<Message[], number>();
-const messagesCompactions = new WeakMap<Message[], number>();
+const messagesCompactionTimes = new WeakMap<Message[], Array<number | undefined>>();
 
 function charsOf(message: Message): number {
   let chars = messageChars.get(message);
@@ -81,13 +81,14 @@ function estimateOwnTokens(node: CanvasNode): number {
   return tokens;
 }
 
-function compactionsIn(messages: Message[]): number {
-  let count = messagesCompactions.get(messages);
-  if (count === undefined) {
-    count = messages.reduce((sum, m) => sum + m.blocks.filter((b) => b.type === "compaction").length, 0);
-    messagesCompactions.set(messages, count);
+/** When each compaction in these messages ran (undefined: during a run, before any child existed). */
+function compactionTimes(messages: Message[]): Array<number | undefined> {
+  let times = messagesCompactionTimes.get(messages);
+  if (times === undefined) {
+    times = messages.flatMap((m) => m.blocks.flatMap((b) => (b.type === "compaction" ? [b.at] : [])));
+    messagesCompactionTimes.set(messages, times);
   }
-  return count;
+  return times;
 }
 
 /** Exact when measured; otherwise the nearest measured ancestor's size plus estimates below it. */
@@ -122,13 +123,16 @@ function combinedOf(
   return combined;
 }
 
+/** Compactions this node's session inherited: its own, plus its ancestors' from before it started. */
 function countCompactions(node: CanvasNode, nodes: Nodes): number {
-  let count = 0;
-  const seen = new Set<NodeId>();
-  let current: CanvasNode | undefined = node;
+  const startedAt = node.data.chat.messages[0]?.createdAt ?? Number.POSITIVE_INFINITY;
+  let count = compactionTimes(node.data.chat.messages).length;
+  const seen = new Set<NodeId>([node.id]);
+  const firstParentId: NodeId | undefined = node.data.chat.parentIds[0];
+  let current: CanvasNode | undefined = firstParentId ? nodes[firstParentId] : undefined;
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
-    count += compactionsIn(current.data.chat.messages);
+    count += compactionTimes(current.data.chat.messages).filter((at) => at === undefined || at <= startedAt).length;
     const parentId: NodeId | undefined = current.data.chat.parentIds[0];
     current = parentId ? nodes[parentId] : undefined;
   }
@@ -149,7 +153,13 @@ export function contextView(
   const parents = parentsOf(node, nodes).map((p) => combinedOf(p, nodes, setupTokens, new Set([nodeId]), memo));
   const isRoot = parents.length === 0;
   const largestParent = parents.reduce((max, p) => Math.max(max, p.tokens), 0);
-  const own = isRoot ? combined.tokens : Math.max(0, combined.tokens - largestParent);
+  // After its own compaction a node holds only its summary and what followed, so it owns all of it.
+  // Otherwise own size is measured from the parent's size when the run started, if that was recorded.
+  const base = node.data.context?.base;
+  const own =
+    isRoot || compactionTimes(node.data.chat.messages).length > 0
+      ? combined.tokens
+      : Math.max(0, combined.tokens - (base ?? largestParent));
   const window = combined.window ?? opts.defaultWindow ?? DEFAULT_WINDOW;
   const percent = window > 0 ? combined.tokens / window : 0;
   const context = node.data.context;
@@ -173,4 +183,12 @@ export function contextLabel(view: ContextView): string {
   const mark = view.exact ? "" : "~";
   if (view.isRoot) return `${mark}${formatTokens(view.combined)}`;
   return `${mark}+${formatTokens(view.own)} · ${mark}${formatTokens(view.combined)}`;
+}
+
+/** The largest measured parent's size as a node's run starts, stored with its measurement as `base`. */
+export function contextBaseFor(nodeId: NodeId, nodes: Nodes): number | undefined {
+  const node = nodes[nodeId];
+  if (!node) return undefined;
+  const sizes = parentsOf(node, nodes).flatMap((p) => (p.data.context?.exact ? [p.data.context.tokens] : []));
+  return sizes.length > 0 ? Math.max(...sizes) : undefined;
 }

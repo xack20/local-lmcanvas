@@ -38,7 +38,8 @@ describe("compactNode", () => {
     expect(calls[0]).toMatchObject({ canvasId: CANVAS_ID, nodeId, mode: "inPlace", focus: "keep X", session: { provider: "claude", id: "s1" } });
     const node = store.getState().nodes[nodeId];
     expect(node.data.context).toEqual(CONTEXT);
-    expect(node.data.chat.messages[1].blocks.at(-1)).toEqual({ type: "compaction", trigger: "manual", before: 412_000, after: 38_000 });
+    // `at` lets children that forked before this compaction leave it out of their count.
+    expect(node.data.chat.messages[1].blocks.at(-1)).toEqual({ type: "compaction", trigger: "manual", before: 412_000, after: 38_000, at: expect.any(Number) });
     expect(store.getState().compactingNodeIds[nodeId]).toBeUndefined();
   });
 

@@ -36,6 +36,8 @@ export type CompactionBlock = {
   method?: "summary" | "trimmed";
   /** A manual compaction's own cost (it is a real Claude call). */
   usage?: UsageSummary;
+  /** When an in-place compaction ran; children that started earlier don't count it. */
+  at?: number;
 };
 
 export type ContentBlock = TextBlock | ToolUseBlock | ThinkingBlock | ImageBlock | CompactionBlock;
@@ -54,6 +56,8 @@ export type ContextSnapshot = {
   model?: string;
   /** False for an estimate (older nodes, other providers, a failed measurement). */
   exact: boolean;
+  /** The largest parent's size when this node's run started; own size is measured from it. */
+  base?: number;
   measuredAt: number;
 };
 

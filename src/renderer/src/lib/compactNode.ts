@@ -75,6 +75,7 @@ export async function compactNode(
       before: result.before,
       after: result.after,
       ...(result.usage ? { usage: result.usage } : {}),
+      at: Date.now(),
     });
   }
   if (result.context) s.setNodeContext(args.nodeId, result.context);

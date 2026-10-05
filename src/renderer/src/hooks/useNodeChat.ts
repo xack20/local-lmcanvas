@@ -15,6 +15,7 @@ import type { Attachment, ChatEvent } from "@shared/ipc";
 import { buildMergeContext } from "@shared/history";
 import { isUnnamedCanvasName, promptToCanvasName } from "@shared/canvasName";
 import { createNextStepsStreamer } from "@/lib/nextStepsParser";
+import { contextBaseFor } from "@shared/contextSize";
 
 export function useNodeChat(nodeId: NodeId) {
   const storeApi = useCanvasStoreApi();
@@ -99,6 +100,8 @@ export function useNodeChat(nodeId: NodeId) {
         status: "streaming",
       });
 
+      // The parent's size now: this node's own size is measured from it, even if the parent compacts later.
+      const contextBase = contextBaseFor(nodeId, storeApi.getState().nodes);
       const fullHistory = storeApi.getState().getHistoryForNode(nodeId);
       const history = fullHistory.slice(0, -2);
       const currentSession = nodeBeforeSubmit?.data.chat.providerSession;
@@ -271,7 +274,7 @@ export function useNodeChat(nodeId: NodeId) {
             return;
           }
           case "context":
-            s.setNodeContext(nodeId, ev.context);
+            s.setNodeContext(nodeId, contextBase !== undefined ? { ...ev.context, base: contextBase } : ev.context);
             return;
           case "done":
             if (ev.usage) {
