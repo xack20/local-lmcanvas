@@ -1,6 +1,6 @@
 // src/main/claude/replayFit.test.mjs
 import { describe, expect, test } from "bun:test";
-import { chunkText, estimateTokens, fittedPrompt, planReplay, trimToFit } from "./replayFit.ts";
+import { chunkText, estimateTokens, fittedPrompt, planReplay, shrinkingReplayBudgets, trimToFit } from "./replayFit.ts";
 
 const msg = (role, chars, tag = role) => ({ id: `${tag}-${chars}`, role, createdAt: 1, blocks: [{ type: "text", text: tag[0].repeat(chars) }] });
 
@@ -50,5 +50,15 @@ describe("chunkText / fittedPrompt / trimToFit", () => {
     expect(prompt).not.toContain("o".repeat(100));
     expect(prompt).toContain("k".repeat(100));
     expect(prompt.endsWith("[User]\nnext\n\n[Assistant]")).toBe(true);
+  });
+});
+
+describe("shrinkingReplayBudgets", () => {
+  test("halves the budget each retry, for text that runs denser than four characters a token", () => {
+    expect(shrinkingReplayBudgets(200_000, 20_000)).toEqual([70_000, 35_000, 17_500]);
+  });
+
+  test("never goes below a small floor, even for a window smaller than the setup", () => {
+    expect(shrinkingReplayBudgets(20_000, 20_000).every((b) => b >= 1_000)).toBe(true);
   });
 });

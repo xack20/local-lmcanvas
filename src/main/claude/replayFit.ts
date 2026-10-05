@@ -5,6 +5,8 @@ import { buildPromptWithHistory } from "./history";
 
 const REPLY_HEADROOM = 0.2;
 const RECENT_SHARE = 0.5;
+const RETRY_DIVISORS = [2, 4, 8];
+const MIN_RETRY_BUDGET = 1_000;
 
 export type ReplayPlan =
   | { fits: true; estimate: number }
@@ -80,4 +82,11 @@ export function trimToFit(history: Message[], newPrompt: string, budgetTokens: n
   if (!last || room === 0) return bare;
   const tail = sectionOf(last).slice(-room);
   return `[Earlier message, cut to fit]\n${tail}\n\n${bare}`;
+}
+
+/** Budgets for re-trimming a replay that still overflowed: the 4-characters-a-token estimate
+ *  runs low for code and non-Latin text, so each retry halves what it sends. */
+export function shrinkingReplayBudgets(window: number, setupTokens: number): number[] {
+  const full = Math.floor(window * (1 - REPLY_HEADROOM)) - setupTokens;
+  return RETRY_DIVISORS.map((divisor) => Math.max(MIN_RETRY_BUDGET, Math.floor(full / divisor)));
 }

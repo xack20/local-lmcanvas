@@ -16,7 +16,7 @@ import { buildPromptWithHistory } from "./claude/history";
 import { createClaudeModelCatalog } from "./claude/models";
 import { loadModelWindows, type ModelWindows } from "./claude/modelWindows";
 import { compactFocus, runCompaction } from "./claude/compaction";
-import { estimateTokens, fittedPrompt, planReplay, trimToFit } from "./claude/replayFit";
+import { estimateTokens, fittedPrompt, planReplay, shrinkingReplayBudgets, trimToFit } from "./claude/replayFit";
 import { summarizeForReplay } from "./claude/replaySummary";
 import { isPromptTooLongEvent, overflowRetryTarget } from "./claude/overflowRetry";
 import { DEFAULT_SETUP_TOKENS, DEFAULT_WINDOW } from "@shared/contextSize";
@@ -358,7 +358,13 @@ function registerIpc(): void {
       parentSession,
       currentSession,
     } = args;
-    const send = (ev: ChatEvent) => client.send("chat:event", ev);
+    // Every chat ends with exactly one `done` (the renderer settles on it). An attempt that
+    // overflowed swallows its own, so a stop at that moment would otherwise leave the reply open.
+    let doneSent = false;
+    const send = (ev: ChatEvent) => {
+      if (ev.type === "done") doneSent = true;
+      client.send("chat:event", ev);
+    };
 
     const canvas = await readCanvas(canvasId);
     if (!canvas) {
@@ -656,7 +662,24 @@ function registerIpc(): void {
       // Never fail on overflow: compact the session (or a fork of the parent's) once, then retry.
       if (firstAttempt.overflowed && !controller.signal.aborted) {
         const target = overflowRetryTarget({ current: compatibleCurrentSession, parent: compatibleParentSession });
-        if (!target) throw new Error("This conversation is too long for the model, and there's no session to compact.");
+        if (!target) {
+          // A replay the estimate thought would fit (dense text runs past 4 characters a token):
+          // leave out more of the oldest messages until it fits.
+          const window = modelWindows?.windowFor(claudeRun?.resolvedModel) ?? DEFAULT_WINDOW;
+          send({ chatId, type: "compacted", trigger: "replay", method: "trimmed", before: null, after: null });
+          let stillOverflowing = true;
+          for (const budget of shrinkingReplayBudgets(window, DEFAULT_SETUP_TOKENS)) {
+            if (controller.signal.aborted) break;
+            agentPrompt = trimToFit(history, prompt, budget);
+            const retry = await runAttempt(model, claudeRun ? claudeRun.reasoningEffort : requestedEffort, false, true);
+            stillOverflowing = retry.overflowed;
+            if (!stillOverflowing) break;
+          }
+          if (stillOverflowing && !controller.signal.aborted) {
+            throw new Error("This conversation is too long for the model, even with its earlier messages left out.");
+          }
+          return;
+        }
         send({ chatId, type: "compacting", active: true });
         try {
           const compacted = await runCompaction({
@@ -685,6 +708,7 @@ function registerIpc(): void {
       send({ chatId, type: "done", isError: true, provider });
     } finally {
       activeChats.finish(chatId);
+      if (!doneSent) send({ chatId, type: "done", isError: false, provider });
     }
   }, "shared");
 
