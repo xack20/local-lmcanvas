@@ -54,6 +54,7 @@ function harness({ info, serve, portFree = true, keepAwake = true } = {}) {
     server,
     devices: {
       createPairingToken: (now) => ({ token: "tok123", expiresAt: now + 600_000 }),
+      clearPairingTokens: () => calls.push(["clearTokens"]),
       findByKey: (key) => (key === "good" ? { id: "d1" } : undefined),
       list: () => [{ id: "d1", label: "Chrome on Windows", keyHash: "secret-hash", createdAt: 1, lastSeenAt: 2 }],
       remove: async (id) => {
@@ -128,8 +129,19 @@ describe("createWebService", () => {
     await h.service.setEnabled(true);
     const status = await h.service.setEnabled(false);
     expect(status).toMatchObject({ enabled: false, running: false, url: null });
-    expect(h.calls.slice(2)).toEqual([["disableServe"], ["close"], ["expireClients"]]);
+    expect(h.calls.slice(2)).toEqual([["disableServe"], ["close"], ["expireClients"], ["clearTokens"]]);
     expect(h.awake.size).toBe(0);
+  });
+
+  test("pairing links stop working when access is turned off or the app quits", async () => {
+    const h = harness();
+    await h.service.setEnabled(true);
+    h.service.createPairingLink();
+    await h.service.setEnabled(false);
+    expect(h.calls.filter(([name]) => name === "clearTokens")).toHaveLength(1);
+    await h.service.setEnabled(true);
+    await h.service.shutdown();
+    expect(h.calls.filter(([name]) => name === "clearTokens")).toHaveLength(2);
   });
 
   test("does not remove a Serve mapping someone else replaced ours with", async () => {
@@ -201,7 +213,7 @@ describe("createWebService", () => {
     h.faults.info = undefined;
     await h.service.setEnabled(false);
     expect(h.tsState.serve).toEqual({ httpsInUse: false, proxiesTo: null });
-    expect(h.calls.slice(2)).toEqual([["disableServe"], ["close"], ["expireClients"]]);
+    expect(h.calls.slice(2)).toEqual([["disableServe"], ["close"], ["expireClients"], ["clearTokens"]]);
     expect(h.server.port()).toBeNull();
   });
 
@@ -213,7 +225,7 @@ describe("createWebService", () => {
     h.faults.serveState = undefined;
     await h.service.setEnabled(false);
     expect(h.tsState.serve).toEqual({ httpsInUse: false, proxiesTo: null });
-    expect(h.calls.slice(2)).toEqual([["disableServe"], ["close"], ["expireClients"]]);
+    expect(h.calls.slice(2)).toEqual([["disableServe"], ["close"], ["expireClients"], ["clearTokens"]]);
     expect(h.server.port()).toBeNull();
   });
 

@@ -28,6 +28,17 @@ describe("loadDeviceStore", () => {
     expect(await store.redeemPairingToken(token, "again", 3000)).toBeNull();
   });
 
+  test("clearing pairing tokens voids every outstanding link", async () => {
+    const store = await loadDeviceStore(fileFor("cleared"));
+    const first = store.createPairingToken(0);
+    const second = store.createPairingToken(0);
+    store.clearPairingTokens();
+    expect(await store.redeemPairingToken(first.token, "x", 1)).toBeNull();
+    expect(await store.redeemPairingToken(second.token, "x", 1)).toBeNull();
+    const fresh = store.createPairingToken(2);
+    expect(await store.redeemPairingToken(fresh.token, "x", 3)).not.toBeNull();
+  });
+
   test("refuses expired and unknown tokens", async () => {
     const store = await loadDeviceStore(fileFor("expired"));
     const { token, expiresAt } = store.createPairingToken(0);

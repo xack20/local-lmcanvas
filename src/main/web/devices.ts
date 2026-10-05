@@ -16,6 +16,8 @@ export type PairedDevice = {
 
 export type DeviceStore = {
   createPairingToken(now: number): { token: string; expiresAt: number };
+  /** Voids every outstanding pairing link (browser access was turned off). */
+  clearPairingTokens(): void;
   redeemPairingToken(
     token: string,
     label: string,
@@ -77,6 +79,9 @@ export async function loadDeviceStore(
       const expiresAt = now + PAIRING_TOKEN_TTL_MS;
       tokens.set(hashSecret(token), expiresAt);
       return { token, expiresAt };
+    },
+    clearPairingTokens() {
+      tokens.clear();
     },
     async redeemPairingToken(token, label, now) {
       const tokenHash = hashSecret(token);

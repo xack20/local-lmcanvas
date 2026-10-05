@@ -23,7 +23,7 @@ export type PowerSave = { start(): number; stop(id: number): void };
 export type WebServiceDeps = {
   tailscale: TailscaleControl;
   server: Pick<WebServer, "listen" | "close" | "disconnectDevice" | "port">;
-  devices: Pick<DeviceStore, "createPairingToken" | "findByKey" | "list" | "remove">;
+  devices: Pick<DeviceStore, "createPairingToken" | "clearPairingTokens" | "findByKey" | "list" | "remove">;
   readSettings: () => Promise<Pick<AppSettings, "browserAccess">>;
   writeBrowserAccess: (patch: Partial<BrowserAccessSettings>) => Promise<Pick<AppSettings, "browserAccess">>;
   powerSave: PowerSave;
@@ -141,6 +141,7 @@ export function createWebService(deps: WebServiceDeps): WebService {
     live = null;
     await deps.server.close();
     deps.expireBrowserClients();
+    deps.devices.clearPairingTokens();
     applyAwake(false);
   };
 

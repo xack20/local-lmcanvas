@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Globe, Moon } from "lucide-react";
 import type { BrowserAccessStatus, PairingLink } from "@shared/ipc";
-import { formatExpiry, formatLastSeen, statusLine } from "@/lib/browserAccessText";
+import { formatLastSeen, pairingHint, pairingToShow, statusLine } from "@/lib/browserAccessText";
 import { Toggle } from "./Toggle";
 
 const CLOCK_TICK_MS = 15_000;
@@ -15,26 +15,34 @@ export function BrowserAccessSection() {
   const [pairing, setPairing] = useState<PairingLink | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => {
-    window.api.web.status().then(setStatus).catch((e: unknown) => setError(messageOf(e)));
+  const showStatus = useCallback((next: BrowserAccessStatus) => {
+    setStatus(next);
+    setPairing((current) => pairingToShow(next, current));
   }, []);
+
+  useEffect(() => {
+    window.api.web.status().then(showStatus).catch((e: unknown) => setError(messageOf(e)));
+  }, [showStatus]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
     return () => window.clearInterval(timer);
   }, []);
 
-  const run = useCallback(async (action: () => Promise<BrowserAccessStatus>) => {
-    setBusy(true);
-    setError(null);
-    try {
-      setStatus(await action());
-    } catch (e: unknown) {
-      setError(messageOf(e));
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const run = useCallback(
+    async (action: () => Promise<BrowserAccessStatus>) => {
+      setBusy(true);
+      setError(null);
+      try {
+        showStatus(await action());
+      } catch (e: unknown) {
+        setError(messageOf(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [showStatus],
+  );
 
   const createLink = async (): Promise<void> => {
     setError(null);
@@ -92,7 +100,7 @@ export function BrowserAccessSection() {
                 <div className="mt-2 flex flex-col gap-1.5">
                   <code className="break-all rounded bg-muted px-2 py-1 text-[11px]">{pairing.url}</code>
                   <div className="flex items-center justify-between text-muted-foreground">
-                    <span>{formatExpiry(pairing.expiresAt, now)}. Open it once on the device you want to pair.</span>
+                    <span>{pairingHint(pairing.expiresAt, now)}</span>
                     <button
                       type="button"
                       onClick={() => void navigator.clipboard.writeText(pairing.url)}

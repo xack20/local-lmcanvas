@@ -1,4 +1,4 @@
-import type { BrowserAccessStatus } from "@shared/ipc";
+import type { BrowserAccessStatus, PairingLink } from "@shared/ipc";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -15,6 +15,16 @@ export function formatExpiry(expiresAt: number, now: number): string {
   const remaining = expiresAt - now;
   if (remaining <= 0) return "Expired. Create a new link.";
   return `Expires in ${Math.max(1, Math.round(remaining / MINUTE_MS))} min`;
+}
+
+export function pairingHint(expiresAt: number, now: number): string {
+  const expiry = formatExpiry(expiresAt, now);
+  return expiresAt > now ? `${expiry}. Open it once on the device you want to pair.` : expiry;
+}
+
+/** A pairing link only works while access is running: the Mac voids them all when it stops. */
+export function pairingToShow(status: BrowserAccessStatus, pairing: PairingLink | null): PairingLink | null {
+  return status.running ? pairing : null;
 }
 
 export function formatLastSeen(lastSeenAt: number, now: number): string {
