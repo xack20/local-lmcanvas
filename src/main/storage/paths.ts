@@ -2,7 +2,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 
-export const ROOT_DIR = join(homedir(), ".local-lmcanvas");
+function getHomeDir(): string {
+  // Respect process.env.HOME for testing, otherwise use os.homedir()
+  return process.env.HOME || homedir();
+}
+
+export const ROOT_DIR = join(getHomeDir(), ".local-lmcanvas");
 export const CANVASES_DIR = join(ROOT_DIR, "canvases");
 export const SETTINGS_FILE = join(ROOT_DIR, "settings.json");
 
