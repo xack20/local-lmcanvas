@@ -2,6 +2,8 @@ import type { Client } from "../api/client";
 import type { Attachment } from "@shared/ipc";
 import type {
   CodexServiceTier,
+  CompactionTrigger,
+  ContextSnapshot,
   ErrorCode,
   ModelFallback,
   ProviderSessionRef,
@@ -24,6 +26,15 @@ export type RunnerEvent =
       code?: ErrorCode;
       usage?: UsageSummary;
     }
+  | { kind: "compacting"; active: boolean; error?: string }
+  | {
+      kind: "compacted";
+      trigger: CompactionTrigger;
+      before: number | null;
+      after: number | null;
+      method?: "summary" | "trimmed";
+    }
+  | { kind: "context"; context: ContextSnapshot }
   | { kind: "error"; message: string; code?: ErrorCode };
 
 const AUTH_PATTERNS: RegExp[] = [
@@ -51,6 +62,18 @@ const POLICY_REFUSAL_PATTERNS: RegExp[] = [
 export function isPolicyRefusal(message: string): boolean {
   if (!message) return false;
   return POLICY_REFUSAL_PATTERNS.some((re) => re.test(message));
+}
+
+const PROMPT_TOO_LONG_PATTERNS: RegExp[] = [
+  /prompt is too long/i,
+  /input is too long/i,
+  /context (?:length|window) (?:exceeded|limit)/i,
+  /exceeds? the (?:maximum )?context/i,
+];
+
+export function isPromptTooLong(message: string): boolean {
+  if (!message) return false;
+  return PROMPT_TOO_LONG_PATTERNS.some((re) => re.test(message));
 }
 
 export type RunAgentOpts = {

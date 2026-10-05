@@ -105,9 +105,13 @@ import { findExecutable } from "./configuredBin";
 import {
   isAuthError,
   isPolicyRefusal,
+  isPromptTooLong,
   type RunnerEvent,
 } from "../agents/types";
 import { normalizeUsage } from "../agents/usage";
+import { measureContext } from "./contextUsage";
+import { heldOpenPrompt } from "./heldOpenPrompt";
+import { mapSystemMessage } from "./systemEvents";
 
 const ASK_USER_SYSTEM_NOTE = `\n\nWhen you need to ask the local user a structured multiple-choice question, use the \`mcp__lmc__ask_user_question\` tool. It renders an interactive picker inside the local-lmcanvas app. Do NOT use the built-in AskUserQuestion tool — it is disabled in this environment.`;
 
@@ -189,15 +193,21 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
       opts.onEvent({ ...ev, code: "policy_refusal" });
       return;
     }
+    if (ev.kind === "error" && !ev.code && isPromptTooLong(ev.message)) {
+      opts.onEvent({ ...ev, code: "prompt_too_long" });
+      return;
+    }
+    if (ev.kind === "done" && ev.isError && !ev.code && isPromptTooLong(ev.result ?? "")) {
+      opts.onEvent({ ...ev, code: "prompt_too_long" });
+      return;
+    }
     opts.onEvent(ev);
   };
 
   const attachments = opts.attachments ?? [];
-  // string-prompt path is preserved when there are no attachments so we don't
-  // change the working behaviour for plain-text chats. only images route through
-  // streaming-input.
-  const promptInput: string | AsyncIterable<SDKUserMessage> =
-    attachments.length > 0 ? buildStreamingPrompt(prompt, attachments) : prompt;
+  // A held-open prompt stream keeps the session answering control requests after its
+  // final result, so the context can be measured before the run closes.
+  const held = heldOpenPrompt(buildUserMessage(prompt, attachments));
 
   // Plan mode forces the agent preset; chatOnly only kicks in for vanilla chat.
   const chatOnly = opts.chatOnly === true && !opts.planMode;
@@ -218,7 +228,7 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
 
   try {
     const q = query({
-      prompt: promptInput,
+      prompt: held.input,
       options: {
         cwd: opts.cwd,
         // Plan mode: SDK disallows mutating tools and the model returns a plan.
@@ -261,15 +271,20 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
         emittedSessionId = sessionId;
         emit({ kind: "session", session: { provider: "claude", id: sessionId } });
       }
-      handleMessage(msg, seenToolUseIds, emit);
+      const systemEvent = mapSystemMessage(msg);
+      if (systemEvent) emit(systemEvent);
       if (msg.type === "result") {
-        break;
+        const context = await measureContext(q);
+        if (context) emit({ kind: "context", context });
       }
+      handleMessage(msg, seenToolUseIds, emit);
+      if (msg.type === "result") break;
     }
   } catch (err: unknown) {
     const message = errorMessage(err);
     emit({ kind: "error", message });
   } finally {
+    held.release();
     if (!doneEmitted) emit({ kind: "done", isError: false });
   }
 }
@@ -392,10 +407,10 @@ function toolResultContentToString(content: ToolResultBlockParam["content"]): st
   return parts.join("\n");
 }
 
-async function* buildStreamingPrompt(
-  text: string,
-  attachments: Attachment[]
-): AsyncIterable<SDKUserMessage> {
+function buildUserMessage(text: string, attachments: Attachment[]): SDKUserMessage {
+  if (attachments.length === 0) {
+    return { type: "user", parent_tool_use_id: null, message: { role: "user", content: text } };
+  }
   const content: ContentBlockParam[] = [];
   if (text.length > 0) {
     const tb: TextBlockParam = { type: "text", text };
@@ -408,11 +423,7 @@ async function* buildStreamingPrompt(
     };
     content.push(ib);
   }
-  yield {
-    type: "user",
-    parent_tool_use_id: null,
-    message: { role: "user", content },
-  };
+  return { type: "user", parent_tool_use_id: null, message: { role: "user", content } };
 }
 
 function errorMessage(err: unknown): string {
