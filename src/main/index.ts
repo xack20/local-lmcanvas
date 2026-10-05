@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, MenuItem, nativeImage, shell, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, MenuItem, nativeImage, powerSaveBlocker, shell, dialog } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -9,7 +9,8 @@ import {
   writeCanvas,
   deleteCanvas,
 } from "./storage/canvases";
-import { readSettings, writeSettings } from "./storage/settings";
+import { readSettings, writeBrowserAccess, writeSettings } from "./storage/settings";
+import { ROOT_DIR } from "./storage/paths";
 import { buildPromptWithHistory } from "./claude/history";
 import { runAgent, type RunnerEvent } from "./agents";
 import {
@@ -30,7 +31,12 @@ import {
 import { createActiveChats } from "./api/activeChats";
 import { desktopClient, type Client } from "./api/client";
 import { bindRegistryToIpc, createApiRegistry } from "./api/registry";
+import { createBrowserClientRegistry } from "./web/browserClients";
 import { createCanvasLocks } from "./web/canvasLocks";
+import { loadDeviceStore } from "./web/devices";
+import { createWebServer } from "./web/server";
+import { createTailscale } from "./web/tailscale";
+import { createWebService, isLocalPortFree, type WebService } from "./web/service";
 import { getShellPath } from "./shellPath";
 import { initAutoUpdate, checkForUpdatesNow } from "./autoUpdate";
 import type {
@@ -114,6 +120,48 @@ function watchClient(client: Client): Client {
     canvasLocks.releaseAll(client);
   });
   return client;
+}
+
+const BROWSER_CLIENT_GRACE_MS = 2 * 60 * 1000;
+const browserClients = createBrowserClientRegistry({
+  graceMs: BROWSER_CLIENT_GRACE_MS,
+  onCreated: watchClient,
+});
+let activeWebService: WebService | null = null;
+
+async function createBrowserAccess(): Promise<WebService> {
+  const devices = await loadDeviceStore(join(ROOT_DIR, "web-devices.json"));
+  let service: WebService | null = null;
+  const server = createWebServer({
+    registry: api,
+    clients: browserClients,
+    devices,
+    gateContext: () => service?.gateContext() ?? null,
+    staticRoot: join(__dirname, "../renderer"),
+    homeDir: homedir(),
+  });
+  service = createWebService({
+    tailscale: createTailscale(),
+    server,
+    devices,
+    readSettings,
+    writeBrowserAccess,
+    powerSave: {
+      start: () => powerSaveBlocker.start("prevent-app-suspension"),
+      stop: (id) => powerSaveBlocker.stop(id),
+    },
+    isPortFree: isLocalPortFree,
+    expireBrowserClients: () => browserClients.expireAll(),
+  });
+  return service;
+}
+
+function registerWebChannels(service: WebService): void {
+  api.handle("web:status", async () => service.status(), "desktop-only");
+  api.handle("web:setEnabled", async (_client, enabled: boolean) => service.setEnabled(enabled), "desktop-only");
+  api.handle("web:setKeepAwake", async (_client, keepAwake: boolean) => service.setKeepAwake(keepAwake), "desktop-only");
+  api.handle("web:createPairingLink", async () => service.createPairingLink(), "desktop-only");
+  api.handle("web:removeDevice", async (_client, deviceId: string) => service.removeDevice(deviceId), "desktop-only");
 }
 
 const CLAUDE_FABLE_POLICY_FALLBACK_MODEL = "claude-opus-4-8";
@@ -619,10 +667,16 @@ app.whenReady().then(async () => {
   }
 
   registerIpc();
+  const webService = await createBrowserAccess();
+  registerWebChannels(webService);
   bindRegistryToIpc(api, ipcMain, (sender) => watchClient(desktopClient(sender)));
+  activeWebService = webService;
   createWindow();
   initAutoUpdate();
   installUpdateMenuItem();
+  void webService
+    .startIfEnabled()
+    .catch((error) => console.warn("[web] browser access not started:", error));
 
   void readSettings()
     .then((settings) =>
@@ -639,6 +693,16 @@ app.on("window-all-closed", () => {
   app.quit();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (activeWebService) {
+    event.preventDefault();
+    const service = activeWebService;
+    activeWebService = null;
+    void service
+      .shutdown()
+      .catch((error) => console.warn("[web] shutdown failed:", error))
+      .finally(() => app.quit());
+    return;
+  }
   shutdownCodexAppServers();
 });

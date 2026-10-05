@@ -92,6 +92,13 @@ const api: LmcApi = {
       return () => ipcRenderer.off("canvas:lockLost", listener);
     },
   },
+  web: {
+    status: () => ipcRenderer.invoke("web:status"),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke("web:setEnabled", enabled),
+    setKeepAwake: (keepAwake: boolean) => ipcRenderer.invoke("web:setKeepAwake", keepAwake),
+    createPairingLink: () => ipcRenderer.invoke("web:createPairingLink"),
+    removeDevice: (deviceId: string) => ipcRenderer.invoke("web:removeDevice", deviceId),
+  },
 };
 
 contextBridge.exposeInMainWorld("api", api);

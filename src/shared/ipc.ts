@@ -189,6 +189,19 @@ export type ProviderAuthStatus = {
 export type CanvasLockResult = { ok: true } | { ok: false; holderKind: "desktop" | "browser" };
 export type CanvasLockLostEvent = { canvasId: string };
 
+export type PairedDeviceSummary = { id: string; label: string; createdAt: number; lastSeenAt: number };
+
+export type BrowserAccessStatus = {
+  enabled: boolean;
+  running: boolean;
+  keepAwake: boolean;
+  url: string | null;
+  problem: string | null;
+  devices: PairedDeviceSummary[];
+};
+
+export type PairingLink = { url: string; expiresAt: number };
+
 export type LmcApi = {
   canvases: {
     list(): Promise<CanvasSummary[]>;
@@ -260,6 +273,14 @@ export type LmcApi = {
     takeOver(canvasId: string): Promise<void>;
     release(canvasId: string): Promise<void>;
     onLost(handler: (ev: CanvasLockLostEvent) => void): () => void;
+  };
+  web: {
+    /** Desktop-only: browser access over Tailscale. */
+    status(): Promise<BrowserAccessStatus>;
+    setEnabled(enabled: boolean): Promise<BrowserAccessStatus>;
+    setKeepAwake(keepAwake: boolean): Promise<BrowserAccessStatus>;
+    createPairingLink(): Promise<PairingLink>;
+    removeDevice(deviceId: string): Promise<BrowserAccessStatus>;
   };
 };
 
