@@ -52,4 +52,10 @@ describe("readCookie", () => {
     expect(readCookie("a=1", "lmc_device")).toBeUndefined();
     expect(readCookie(undefined, "lmc_device")).toBeUndefined();
   });
+  test("returns undefined for a malformed value instead of throwing", () => {
+    expect(readCookie("lmc_device=%", "lmc_device")).toBeUndefined();
+    expect(readCookie("lmc_device=%ZZ", "lmc_device")).toBeUndefined();
+    expect(readCookie("a=1; lmc_device=%E0%A4%A", "lmc_device")).toBeUndefined();
+    expect(readCookie("x=%; lmc_device=good", "lmc_device")).toBe("good");
+  });
 });
