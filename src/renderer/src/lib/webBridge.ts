@@ -22,6 +22,7 @@ const MIN_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 10_000;
 // The Mac sends a tick every 15 s, so this much silence means the connection is dead.
 export const WATCHDOG_MS = 45_000;
+const EPOCH_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type WebSocketLike = {
   onopen: (() => void) | null;
@@ -65,7 +66,7 @@ export type WebBridgeDeps = {
 };
 
 type ServerMessage =
-  | { type: "welcome"; resumed: boolean; seq: number }
+  | { type: "welcome"; resumed: boolean; seq: number; epoch: string | null }
   | { type: "tick" }
   | { type: "event"; seq: number; channel: string; payload: unknown };
 
@@ -80,7 +81,12 @@ function parseMessage(data: unknown): ServerMessage | null {
     if (typeof value !== "object" || value === null) return null;
     const message = value as Record<string, unknown>;
     if (message.type === "welcome") {
-      return { type: "welcome", resumed: message.resumed === true, seq: isCount(message.seq) ? message.seq : 0 };
+      return {
+        type: "welcome",
+        resumed: message.resumed === true,
+        seq: isCount(message.seq) ? message.seq : 0,
+        epoch: typeof message.epoch === "string" && EPOCH_PATTERN.test(message.epoch) ? message.epoch : null,
+      };
     }
     if (message.type === "tick") return { type: "tick" };
     if (message.type === "event" && typeof message.channel === "string" && isSeq(message.seq)) {
@@ -132,7 +138,9 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
   // True from a welcome frame until the socket closes: anything missed has been replayed.
   let connected = false;
   let retryMs = MIN_RETRY_MS;
-  // The last event seq this tab processed; sent on reconnect so the Mac replays what came after.
+  // Which client on the Mac this tab was last welcomed by, and the last event seq it
+  // processed from it; sent on reconnect so the Mac replays what came after.
+  let epoch: string | null = null;
   let lastSeq = 0;
   let watchdog: unknown = null;
 
@@ -248,23 +256,23 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
     }
   };
 
-  // `seq` is the Mac's count for this tab so far: 0 for a fresh client, or the
-  // point a client that couldn't be resumed continues from.
-  const onWelcome = (resumed: boolean, seq: number): void => {
+  // A welcome that isn't a resume comes from a fresh client: its epoch, counting from `seq`.
+  const onWelcome = (welcome: { resumed: boolean; seq: number; epoch: string | null }): void => {
     connected = true;
     deps.onConnection("connected");
-    if (resumed) {
+    epoch = welcome.epoch;
+    if (welcome.resumed) {
       void settleUncertain();
       return;
     }
     stopFollowedChats();
-    lastSeq = seq;
+    lastSeq = welcome.seq;
   };
 
   const onFrame = (data: unknown): void => {
     const message = parseMessage(data);
     if (!message) return;
-    if (message.type === "welcome") return onWelcome(message.resumed, message.seq);
+    if (message.type === "welcome") return onWelcome(message);
     if (message.type === "tick" || message.seq <= lastSeq) return;
     lastSeq = message.seq;
     emit(message.channel, message.payload);
@@ -281,8 +289,9 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
   };
 
   const connect = (): void => {
+    const resumeFrom = `${epoch === null ? "" : `&epoch=${encodeURIComponent(epoch)}`}&after=${lastSeq}`;
     const socket = deps.openSocket(
-      `${deps.origin.replace(/^http/, "ws")}/ws?client=${encodeURIComponent(deps.clientId)}&after=${lastSeq}`,
+      `${deps.origin.replace(/^http/, "ws")}/ws?client=${encodeURIComponent(deps.clientId)}${resumeFrom}`,
     );
     let closed = false;
     const onClosed = (): void => {

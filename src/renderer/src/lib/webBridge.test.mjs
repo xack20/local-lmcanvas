@@ -88,7 +88,8 @@ function harness(responses = {}) {
   const last = () => sockets[sockets.length - 1];
   const frame = (message) => last().onmessage({ data: JSON.stringify(message) });
   const server = {
-    welcome: (resumed, seq) => frame({ type: "welcome", resumed, ...(seq === undefined ? {} : { seq }) }),
+    welcome: (resumed, seq, epoch) =>
+      frame({ type: "welcome", resumed, ...(seq === undefined ? {} : { seq }), ...(epoch === undefined ? {} : { epoch }) }),
     event: (channel, payload) => frame({ type: "event", seq: ++seq, channel, payload }),
     // An event with an explicit seq; later `event` calls continue from it.
     eventAt: (at, channel, payload) => {
@@ -536,6 +537,43 @@ describe("createWebApi event numbering", () => {
     h.server.drop();
     h.server.reconnect();
     expect(h.sockets[2].url).toContain("&after=6000");
+  });
+
+  test("reconnects naming the client it was welcomed by and the last event it processed", () => {
+    const h = harness();
+    h.server.welcome(false, 0, "epochOne");
+    h.server.eventAt(1, "chat:event", { chatId: "c1", type: "start" });
+    h.server.eventAt(2, "chat:event", { chatId: "c1", type: "text_delta", text: "hi" });
+    h.server.drop();
+    h.server.reconnect();
+    expect(h.sockets[1].url).toBe("wss://my-mac.tail1234.ts.net/ws?client=client123456&epoch=epochOne&after=2");
+  });
+
+  test("a welcome that isn't a resume switches to the new client's epoch and count", async () => {
+    const h = harness();
+    const chat = [];
+    h.api.chat.onEvent((ev) => chat.push(ev));
+    h.server.welcome(false, 0, "epochOne");
+    await h.api.chat.start({ chatId: "c1" });
+    h.server.eventAt(5, "chat:event", { chatId: "c1", type: "text_delta", text: "a" });
+    h.server.drop();
+    h.server.reconnect();
+    h.server.welcome(false, 0, "epochTwo");
+    expect(chat.slice(1)).toEqual(syntheticStop("c1"));
+    h.server.restartNumbering();
+    h.server.event("chat:event", { chatId: "c2", type: "text_delta", text: "b" });
+    expect(chat.at(-1)).toEqual({ chatId: "c2", type: "text_delta", text: "b" });
+    h.server.drop();
+    h.server.reconnect();
+    expect(h.sockets[2].url).toContain("&epoch=epochTwo&after=1");
+  });
+
+  test("an unusable epoch in a welcome is not sent back", () => {
+    const h = harness();
+    h.server.welcome(false, 0, "<script>");
+    h.server.drop();
+    h.server.reconnect();
+    expect(h.sockets[1].url).toBe("wss://my-mac.tail1234.ts.net/ws?client=client123456&after=0");
   });
 
   test("an event frame without a usable seq is ignored", () => {

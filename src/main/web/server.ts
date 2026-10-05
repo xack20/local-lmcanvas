@@ -4,7 +4,7 @@ import { dirname, extname, resolve, sep } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import { ApiError, type ApiRegistry } from "../api/registry";
-import type { BrowserClientRegistry, SocketLike } from "./browserClients";
+import type { BrowserClientRegistry, ResumePoint, SocketLike } from "./browserClients";
 import { deviceLabel, type DeviceStore } from "./devices";
 import { checkRequest, readCookie, type GateContext } from "./security";
 
@@ -22,6 +22,7 @@ export const HEADERS_TIMEOUT_MS = 101_000;
 const COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 const LAST_SEQ_PATTERN = /^\d{1,16}$/;
+const EPOCH_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const TICK_FRAME = JSON.stringify({ type: "tick" });
 const HTML = "text/html; charset=utf-8";
 
@@ -162,6 +163,13 @@ function parseLastSeq(raw: string | null): number | null {
   if (!LAST_SEQ_PATTERN.test(raw)) return null;
   const value = Number(raw);
   return Number.isSafeInteger(value) ? value : null;
+}
+
+/** Where a connecting tab left off. An unreadable epoch makes it unresumable. */
+function parseResumePoint(params: URLSearchParams): ResumePoint {
+  const epoch = params.get("epoch");
+  if (epoch !== null && !EPOCH_PATTERN.test(epoch)) return { epoch: null, after: null };
+  return { epoch, after: parseLastSeq(params.get("after")) };
 }
 
 export function createWebServer(deps: WebServerDeps): WebServer {
@@ -363,7 +371,7 @@ export function createWebServer(deps: WebServerDeps): WebServer {
       const clientId = url.searchParams.get("client") ?? "";
       if (!auth.deviceId || !CLIENT_ID_PATTERN.test(clientId)) return refuseUpgrade(socket, 400);
       const deviceId = auth.deviceId;
-      const lastSeq = parseLastSeq(url.searchParams.get("after"));
+      const resumeFrom = parseResumePoint(url.searchParams);
       wss.handleUpgrade(req, socket, head, (ws) => {
         ws.on("error", (error) => {
           console.warn("[web] live connection error:", error.message);
@@ -378,8 +386,8 @@ export function createWebServer(deps: WebServerDeps): WebServer {
           deps.clients.detach(clientId, tracked);
         });
         try {
-          const { resumed, seq } = deps.clients.attach(clientId, deviceId, tracked, lastSeq);
-          ws.send(JSON.stringify({ type: "welcome", resumed, seq }));
+          const { resumed, seq, epoch } = deps.clients.attach(clientId, deviceId, tracked, resumeFrom);
+          ws.send(JSON.stringify({ type: "welcome", resumed, seq, epoch }));
         } catch (error) {
           console.warn("[web] live connection setup failed:", error instanceof Error ? error.message : error);
           ws.terminate();

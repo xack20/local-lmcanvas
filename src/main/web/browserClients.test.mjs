@@ -53,12 +53,12 @@ describe("createBrowserClientRegistry", () => {
   test("events during a dropped connection are replayed in order on reconnect", () => {
     const { registry } = setup();
     const first = fakeSocket();
-    const { client } = registry.attach("tab1", "dev1", first);
+    const { client, epoch } = registry.attach("tab1", "dev1", first);
     registry.detach("tab1", first);
     client.send("chat:event", { n: 1 });
     client.send("chat:event", { n: 2 });
     const second = fakeSocket();
-    const again = registry.attach("tab1", "dev1", second, 0);
+    const again = registry.attach("tab1", "dev1", second, { epoch, after: 0 });
     expect(again.resumed).toBe(true);
     expect(again.client).toBe(client);
     expect(second.messages.map((m) => m.payload.n)).toEqual([1, 2]);
@@ -182,14 +182,14 @@ describe("createBrowserClientRegistry replay", () => {
   test("events written to a socket the server still thinks is live are replayed after the tab's last seq", () => {
     const { registry } = setup();
     const first = fakeSocket();
-    const { client } = registry.attach("tab1", "dev1", first, 0);
+    const { client, epoch } = registry.attach("tab1", "dev1", first);
     client.send("chat:event", { n: 1 });
     client.send("chat:event", { n: 2 });
     client.send("chat:event", { n: 3 });
     expect(seqs(first)).toEqual([1, 2, 3]);
 
     const second = fakeSocket();
-    const again = registry.attach("tab1", "dev1", second, 1);
+    const again = registry.attach("tab1", "dev1", second, { epoch, after: 1 });
 
     expect(again.resumed).toBe(true);
     expect(again.seq).toBe(3);
@@ -200,10 +200,10 @@ describe("createBrowserClientRegistry replay", () => {
 
   test("a tab that is fully caught up gets nothing replayed and is resumed", () => {
     const { registry } = setup();
-    const { client } = registry.attach("tab1", "dev1", fakeSocket(), 0);
+    const { client, epoch } = registry.attach("tab1", "dev1", fakeSocket());
     client.send("chat:event", { n: 1 });
     const second = fakeSocket();
-    expect(registry.attach("tab1", "dev1", second, 1).resumed).toBe(true);
+    expect(registry.attach("tab1", "dev1", second, { epoch, after: 1 }).resumed).toBe(true);
     expect(second.messages).toEqual([]);
   });
 
@@ -211,46 +211,48 @@ describe("createBrowserClientRegistry replay", () => {
   const fiveWhileAway = () => {
     const ctx = setup({ maxReplayEvents: 3 });
     const first = fakeSocket();
-    const { client } = ctx.registry.attach("tab1", "dev1", first, 0);
+    const { client, epoch } = ctx.registry.attach("tab1", "dev1", first);
     ctx.registry.detach("tab1", first);
     for (let n = 1; n <= 5; n++) client.send("chat:event", { n });
-    return { ...ctx, client };
+    return { ...ctx, client, epoch };
   };
 
   test("keeps only the newest events by count, and replays them to a tab that needs no more", () => {
-    const { registry } = fiveWhileAway();
+    const { registry, epoch } = fiveWhileAway();
     const justInTime = fakeSocket();
-    expect(registry.attach("tab1", "dev1", justInTime, 2).resumed).toBe(true);
+    expect(registry.attach("tab1", "dev1", justInTime, { epoch, after: 2 }).resumed).toBe(true);
     expect(seqs(justInTime)).toEqual([3, 4, 5]);
   });
 
   test("a tab that needs a dropped event is not resumed", () => {
-    const { registry } = fiveWhileAway();
+    const { registry, epoch } = fiveWhileAway();
     const behind = fakeSocket();
-    expect(registry.attach("tab1", "dev1", behind, 1)).toMatchObject({ resumed: false, seq: 0 });
+    expect(registry.attach("tab1", "dev1", behind, { epoch, after: 1 })).toMatchObject({ resumed: false, seq: 0 });
     expect(behind.messages).toEqual([]);
   });
 
   test("keeps only the newest events by size", () => {
     const sized = () => {
       const ctx = setup({ maxReplayBytes: 300 });
-      const { client } = ctx.registry.attach("tab1", "dev1", fakeSocket(), 0);
+      const { client, epoch } = ctx.registry.attach("tab1", "dev1", fakeSocket());
       for (let n = 1; n <= 4; n++) client.send("chat:event", { text: "x".repeat(60) });
-      return ctx.registry;
+      return { registry: ctx.registry, epoch };
     };
-    expect(sized().attach("tab1", "dev1", fakeSocket(), 0).resumed).toBe(false);
+    const early = sized();
+    expect(early.registry.attach("tab1", "dev1", fakeSocket(), { epoch: early.epoch, after: 0 }).resumed).toBe(false);
+    const late = sized();
     const caughtUp = fakeSocket();
-    expect(sized().attach("tab1", "dev1", caughtUp, 2).resumed).toBe(true);
+    expect(late.registry.attach("tab1", "dev1", caughtUp, { epoch: late.epoch, after: 2 }).resumed).toBe(true);
     expect(seqs(caughtUp)).toEqual([3, 4]);
   });
 
   test("a tab that can't be resumed ends its old client and starts a fresh one", () => {
-    const { registry, created, client } = fiveWhileAway();
+    const { registry, created, client, epoch } = fiveWhileAway();
     let gone = 0;
     client.onGone(() => gone++);
 
     const behind = fakeSocket();
-    const fresh = registry.attach("tab1", "dev1", behind, 1);
+    const fresh = registry.attach("tab1", "dev1", behind, { epoch, after: 1 });
 
     expect(gone).toBe(1);
     expect(client.isGone()).toBe(true);
@@ -264,8 +266,8 @@ describe("createBrowserClientRegistry replay", () => {
   });
 
   test("a resumable tab keeps its client", () => {
-    const { registry, client } = fiveWhileAway();
-    expect(registry.attach("tab1", "dev1", fakeSocket(), 2).client).toBe(client);
+    const { registry, client, epoch } = fiveWhileAway();
+    expect(registry.attach("tab1", "dev1", fakeSocket(), { epoch, after: 2 }).client).toBe(client);
     expect(client.isGone()).toBe(false);
   });
 
@@ -273,16 +275,16 @@ describe("createBrowserClientRegistry replay", () => {
     const { registry } = setup();
     registry.ensure("tab1", "dev1");
     const socket = fakeSocket();
-    expect(registry.attach("tab1", "dev1", socket, 7)).toMatchObject({ resumed: false, seq: 0 });
+    expect(registry.attach("tab1", "dev1", socket, { epoch: null, after: 7 })).toMatchObject({ resumed: false, seq: 0 });
   });
 
   test("an unreadable last seq never resumes an existing client", () => {
     const { registry } = setup();
     const first = fakeSocket();
-    const { client } = registry.attach("tab1", "dev1", first, 0);
+    const { client, epoch } = registry.attach("tab1", "dev1", first);
     client.send("chat:event", { n: 1 });
     const second = fakeSocket();
-    expect(registry.attach("tab1", "dev1", second, null).resumed).toBe(false);
+    expect(registry.attach("tab1", "dev1", second, { epoch, after: null }).resumed).toBe(false);
     expect(second.messages).toEqual([]);
   });
 
@@ -291,8 +293,45 @@ describe("createBrowserClientRegistry replay", () => {
     const client = registry.ensure("tab1", "dev1");
     client.send("chat:event", { n: 1 });
     const socket = fakeSocket();
-    expect(registry.attach("tab1", "dev1", socket, 0).resumed).toBe(true);
+    expect(registry.attach("tab1", "dev1", socket, { epoch: null, after: 0 }).resumed).toBe(true);
     expect(seqs(socket)).toEqual([1]);
+  });
+});
+
+describe("createBrowserClientRegistry epochs", () => {
+  test("each client gets its own short epoch, reported on attach", () => {
+    const { registry } = setup();
+    const a = registry.attach("tab1", "dev1", fakeSocket());
+    const b = registry.attach("tab2", "dev1", fakeSocket());
+    expect(a.epoch).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+    expect(b.epoch).not.toBe(a.epoch);
+  });
+
+  test("a tab from an earlier client with the same id isn't resumed, even when the numbers line up", () => {
+    const { registry, scheduler } = setup();
+    const first = fakeSocket();
+    const { epoch: oldEpoch } = registry.attach("tab1", "dev1", first);
+    registry.detach("tab1", first);
+    scheduler.fireAll();
+    const recreated = registry.ensure("tab1", "dev1");
+    for (let n = 1; n <= 3; n++) recreated.send("chat:event", { n });
+
+    const socket = fakeSocket();
+    const again = registry.attach("tab1", "dev1", socket, { epoch: oldEpoch, after: 2 });
+
+    expect(again.resumed).toBe(false);
+    expect(again.epoch).not.toBe(oldEpoch);
+    expect(socket.messages).toEqual([]);
+    expect(recreated.isGone()).toBe(true);
+  });
+
+  test("a tab with the current epoch is resumed", () => {
+    const { registry } = setup();
+    const first = fakeSocket();
+    const { epoch } = registry.attach("tab1", "dev1", first);
+    registry.detach("tab1", first);
+    const again = registry.attach("tab1", "dev1", fakeSocket(), { epoch, after: 0 });
+    expect(again).toMatchObject({ resumed: true, epoch });
   });
 });
 
@@ -300,7 +339,7 @@ describe("createBrowserClientRegistry expire", () => {
   test("expiring a tab ends its client at once and frees the id", () => {
     const { registry, scheduler } = setup();
     const socket = fakeSocket();
-    const { client } = registry.attach("tab1", "dev1", socket, 0);
+    const { client } = registry.attach("tab1", "dev1", socket);
     let gone = 0;
     client.onGone(() => gone++);
 
@@ -311,12 +350,12 @@ describe("createBrowserClientRegistry expire", () => {
     expect(socket.closed).toBe(true);
     expect(registry.get("tab1")).toBeUndefined();
     expect(scheduler.pending()).toBe(0);
-    expect(registry.attach("tab1", "dev1", fakeSocket(), 0).resumed).toBe(false);
+    expect(registry.attach("tab1", "dev1", fakeSocket()).resumed).toBe(false);
   });
 
   test("expiring an unknown tab does nothing", () => {
     const { registry } = setup();
-    const { client } = registry.attach("tab1", "dev1", fakeSocket(), 0);
+    const { client } = registry.attach("tab1", "dev1", fakeSocket());
     registry.expire("tab2");
     expect(client.isGone()).toBe(false);
   });

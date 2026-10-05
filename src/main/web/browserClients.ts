@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Client } from "../api/client";
 
 export type SocketLike = { send(data: string): void; close(): void };
@@ -8,6 +9,16 @@ export const REPLAY_MAX_EVENTS = 5_000;
 export const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
 
 const CLIENT_ID_PREFIX = "browser-";
+const EPOCH_BYTES = 9;
+
+/**
+ * Where a reconnecting tab left off: the epoch of the client it was last welcomed
+ * by (null before its first welcome) and the last event seq it processed (null
+ * when unreadable). Seqs only mean something within one epoch.
+ */
+export type ResumePoint = { epoch: string | null; after: number | null };
+
+const FIRST_CONNECT: ResumePoint = { epoch: null, after: 0 };
 
 /** The tab id a browser client was registered under. */
 export const tabIdOf = (client: Pick<Client, "id">): string =>
@@ -21,17 +32,17 @@ export type Scheduler = {
 export type BrowserClientRegistry = {
   ensure(clientId: string, deviceId: string): Client;
   /**
-   * `after` is the last event seq the tab processed (null when unreadable). The
-   * tab is resumed, and sent every kept event after it, only when this client
-   * still has everything the tab is missing. Otherwise the old client is ended
-   * and the tab gets a fresh one. `seq` is the last seq sent so far.
+   * The tab is resumed, and sent every kept event after `from.after`, only when
+   * `from.epoch` is this client's (or the tab has none yet) and the client still
+   * has everything the tab is missing. Otherwise the old client is ended and the
+   * tab gets a fresh one. `seq` is the last seq sent so far.
    */
   attach(
     clientId: string,
     deviceId: string,
     socket: SocketLike,
-    after?: number | null,
-  ): { client: Client; resumed: boolean; seq: number };
+    from?: ResumePoint,
+  ): { client: Client; resumed: boolean; seq: number; epoch: string };
   detach(clientId: string, socket: SocketLike): void;
   /** Ends a tab's client now (its page was closed or reloaded), skipping the grace period. */
   expire(clientId: string): void;
@@ -44,6 +55,7 @@ type SentEvent = { seq: number; frame: string; bytes: number };
 
 type ClientState = {
   deviceId: string;
+  epoch: string;
   socket: SocketLike | null;
   lastSeq: number;
   /** Oldest first; appended in place because every streamed token passes through here. */
@@ -86,8 +98,13 @@ export function createBrowserClientRegistry(opts: {
 
   const oldestKept = (state: ClientState): number => state.sent[0]?.seq ?? state.lastSeq + 1;
 
-  const canResume = (state: ClientState, after: number | null): boolean =>
-    after !== null && after <= state.lastSeq && after >= oldestKept(state) - 1;
+  // A tab without an epoch has never been welcomed, and its id is new with its page,
+  // so every client under that id was created for it.
+  const canResume = (state: ClientState, { epoch, after }: ResumePoint): boolean =>
+    (epoch === null || epoch === state.epoch) &&
+    after !== null &&
+    after <= state.lastSeq &&
+    after >= oldestKept(state) - 1;
 
   const expire = (clientId: string): void => {
     const record = records.get(clientId);
@@ -121,6 +138,7 @@ export function createBrowserClientRegistry(opts: {
   const create = (clientId: string, deviceId: string): ClientRecord => {
     const state: ClientState = {
       deviceId,
+      epoch: randomBytes(EPOCH_BYTES).toString("base64url"),
       socket: null,
       lastSeq: 0,
       sent: [],
@@ -170,9 +188,9 @@ export function createBrowserClientRegistry(opts: {
       startGrace(clientId, record.state);
       return record.client;
     },
-    attach(clientId, deviceId, socket, after = 0) {
+    attach(clientId, deviceId, socket, from = FIRST_CONNECT) {
       const known = sameDevice(clientId, deviceId);
-      const resumed = known !== undefined && canResume(known.state, after);
+      const resumed = known !== undefined && canResume(known.state, from);
       // A tab that can't be resumed stops following its chats, so stop them here too
       // (and free its questions and locks) rather than leave them running unseen.
       if (known && !resumed) expire(clientId);
@@ -191,10 +209,10 @@ export function createBrowserClientRegistry(opts: {
       }
       if (resumed) {
         for (const event of state.sent) {
-          if (event.seq > (after ?? 0)) socket.send(event.frame);
+          if (event.seq > (from.after ?? 0)) socket.send(event.frame);
         }
       }
-      return { client: record.client, resumed, seq: state.lastSeq };
+      return { client: record.client, resumed, seq: state.lastSeq, epoch: state.epoch };
     },
     detach(clientId, socket) {
       const record = records.get(clientId);

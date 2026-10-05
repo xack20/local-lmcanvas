@@ -345,9 +345,9 @@ describe("folder listing", () => {
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
 describe("live connection", () => {
-  const open = (client, after) =>
+  const open = (client, after, epoch) =>
     new Promise((resolve, reject) => {
-      const query = after === undefined ? "" : `&after=${after}`;
+      const query = `${epoch === undefined ? "" : `&epoch=${epoch}`}${after === undefined ? "" : `&after=${after}`}`;
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?client=${client}${query}`, {
         headers: paired({ Origin: ORIGIN }),
       });
@@ -360,32 +360,56 @@ describe("live connection", () => {
   test("welcomes a new tab, delivers numbered events, and replays what it missed after a reconnect", async () => {
     const first = await open("tabws001", 0);
     await settle();
-    expect(first.messages).toEqual([{ type: "welcome", resumed: false, seq: 0 }]);
+    expect(first.messages).toEqual([{ type: "welcome", resumed: false, seq: 0, epoch: expect.stringMatching(/^[A-Za-z0-9_-]{1,64}$/) }]);
+    const { epoch } = first.messages[0];
     clients.get("tabws001").send("chat:event", { n: 1 });
     await settle();
     expect(first.messages[1]).toEqual({ type: "event", seq: 1, channel: "chat:event", payload: { n: 1 } });
     first.ws.close();
     await settle();
     clients.get("tabws001").send("chat:event", { n: 2 });
-    const second = await open("tabws001", 1);
+    const second = await open("tabws001", 1, epoch);
     await settle();
     expect(second.messages).toEqual([
       { type: "event", seq: 2, channel: "chat:event", payload: { n: 2 } },
-      { type: "welcome", resumed: true, seq: 2 },
+      { type: "welcome", resumed: true, seq: 2, epoch },
     ]);
     second.ws.close();
+  });
+
+  test("a tab whose epoch isn't this client's starts over with a new client", async () => {
+    const first = await open("tabws005", 0);
+    await settle();
+    const { epoch } = first.messages[0];
+    const old = clients.get("tabws005");
+    old.send("chat:event", { n: 1 });
+    first.ws.close();
+    await settle();
+    for (const stale of ["someOtherEpoch", "%3Cscript%3E", "x".repeat(65)]) {
+      const again = await open("tabws005", 1, stale);
+      await settle();
+      expect(again.messages).toEqual([{ type: "welcome", resumed: false, seq: 0, epoch: expect.any(String) }]);
+      expect(again.messages[0].epoch).not.toBe(epoch);
+      again.ws.close();
+      await settle();
+    }
+    expect(old.isGone()).toBe(true);
   });
 
   test("an unreadable last seq is not resumed for a tab the server knows", async () => {
     const first = await open("tabws004", 0);
     await settle();
+    let { epoch } = first.messages[0];
     clients.get("tabws004").send("chat:event", { n: 1 });
     first.ws.close();
     await settle();
     for (const after of ["abc", "-1", "1.5", "99999999999999999999"]) {
-      const again = await open("tabws004", after);
+      const again = await open("tabws004", after, epoch);
       await settle();
-      expect(again.messages).toEqual([{ type: "welcome", resumed: false, seq: 0 }]);
+      expect(again.messages).toEqual([{ type: "welcome", resumed: false, seq: 0, epoch: expect.any(String) }]);
+      expect(again.messages[0].epoch).not.toBe(epoch);
+      epoch = again.messages[0].epoch;
+      clients.get("tabws004").send("chat:event", { n: 1 });
       again.ws.close();
       await settle();
     }
