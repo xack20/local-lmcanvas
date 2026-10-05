@@ -551,6 +551,9 @@ function registerIpc(): void {
     activeChats.abortForNode(nodeId);
   }, "shared");
 
+  // Browser adapter only (settles chats whose start request dropped); not part of LmcApi or the preload.
+  api.handle("chat:isActive", async (_client, chatId: unknown) => typeof chatId === "string" && activeChats.has(chatId), "shared");
+
   api.handle("askUser:respond", async (_client, payload: AskUserResponsePayload) => {
     completeAskUser(payload);
   }, "shared");
