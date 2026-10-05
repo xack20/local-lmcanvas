@@ -28,6 +28,7 @@ import {
   completeRequest as completeAskUser,
 } from "./claude/askUserBridge";
 import { desktopClient } from "./api/client";
+import { bindRegistryToIpc, createApiRegistry } from "./api/registry";
 import { getShellPath } from "./shellPath";
 import { initAutoUpdate, checkForUpdatesNow } from "./autoUpdate";
 import type {
@@ -99,6 +100,7 @@ function createWindow(hash?: string): BrowserWindow {
 
 type ActiveChat = { controller: AbortController; nodeId: string };
 const activeChats = new Map<string, ActiveChat>();
+const api = createApiRegistry();
 
 const CLAUDE_FABLE_POLICY_FALLBACK_MODEL = "claude-opus-4-8";
 
@@ -146,37 +148,45 @@ const SLASH_CACHE_TTL_MS = 10_000;
 const slashCache = new Map<string, { at: number; items: SlashItem[] }>();
 
 function registerIpc(): void {
-  ipcMain.handle("canvases:list", async () => listCanvases());
-  ipcMain.handle("canvases:create", async (_e, args: CanvasCreateArgs) => createCanvas(args));
-  ipcMain.handle("canvases:read", async (_e, id: string) => readCanvas(id));
-  ipcMain.handle("canvases:write", async (_e, canvas: Canvas) => writeCanvas(canvas));
-  ipcMain.handle("canvases:delete", async (_e, id: string) => deleteCanvas(id));
+  api.handle("canvases:list", async () => listCanvases());
+  api.handle("canvases:create", async (_client, args: CanvasCreateArgs) => createCanvas(args));
+  api.handle("canvases:read", async (_client, id: string) => readCanvas(id));
+  api.handle("canvases:write", async (_client, canvas: Canvas) => writeCanvas(canvas));
+  api.handle("canvases:delete", async (_client, id: string) => deleteCanvas(id));
 
-  ipcMain.handle("settings:read", async () => readSettings());
-  ipcMain.handle("settings:write", async (_e, s: AppSettings) => writeSettings(s));
+  api.handle("settings:read", async () => readSettings());
+  api.handle("settings:write", async (_client, s: AppSettings) => writeSettings(s));
 
-  ipcMain.handle("dialog:pickFolder", async (_e, defaultPath?: string) => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openDirectory"],
-      defaultPath,
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
-  });
+  api.handle(
+    "dialog:pickFolder",
+    async (_client, defaultPath?: string) => {
+      const result = await dialog.showOpenDialog({
+        properties: ["openDirectory"],
+        defaultPath,
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0];
+    },
+    "desktop-only",
+  );
 
-  ipcMain.handle("shell:openPath", async (_e, path: string) => {
-    await shell.openPath(path);
-  });
+  api.handle(
+    "shell:openPath",
+    async (_client, path: string) => {
+      await shell.openPath(path);
+    },
+    "desktop-only",
+  );
 
-  ipcMain.handle("processes:start", async (_e, args: PersistentProcessStartArgs) =>
+  api.handle("processes:start", async (_client, args: PersistentProcessStartArgs) =>
     startPersistentProcess(args)
   );
 
-  ipcMain.handle("processes:stop", async (_e, id: string) =>
+  api.handle("processes:stop", async (_client, id: string) =>
     stopPersistentProcess(id)
   );
 
-  ipcMain.handle("files:list", async (_e, cwd: string): Promise<FileEntry[]> => {
+  api.handle("files:list", async (_client, cwd: string): Promise<FileEntry[]> => {
     if (!cwd) return [];
     const now = Date.now();
     const cached = filesCache.get(cwd);
@@ -186,7 +196,7 @@ function registerIpc(): void {
     return files;
   });
 
-  ipcMain.handle("slash:list", async (_e, cwd: string): Promise<SlashItem[]> => {
+  api.handle("slash:list", async (_client, cwd: string): Promise<SlashItem[]> => {
     const key = cwd ?? "";
     const now = Date.now();
     const cached = slashCache.get(key);
@@ -196,7 +206,7 @@ function registerIpc(): void {
     return items;
   });
 
-  ipcMain.handle("chat:start", async (e, args: ChatStartArgs) => {
+  api.handle("chat:start", async (client, args: ChatStartArgs) => {
     const {
       chatId,
       nodeId,
@@ -211,7 +221,6 @@ function registerIpc(): void {
       parentSession,
       currentSession,
     } = args;
-    const client = desktopClient(e.sender);
     const send = (ev: ChatEvent) => client.send("chat:event", ev);
 
     const canvas = await readCanvas(canvasId);
@@ -426,13 +435,13 @@ function registerIpc(): void {
     }
   });
 
-  ipcMain.handle("chat:cancel", async (e, chatId: string) => {
+  api.handle("chat:cancel", async (client, chatId: string) => {
     activeChats.get(chatId)?.controller.abort();
     activeChats.delete(chatId);
-    cancelAllForClient(desktopClient(e.sender));
+    cancelAllForClient(client);
   });
 
-  ipcMain.handle("chat:cancelForNode", async (_e, nodeId: string) => {
+  api.handle("chat:cancelForNode", async (_client, nodeId: string) => {
     for (const [chatId, entry] of activeChats) {
       if (entry.nodeId !== nodeId) continue;
       entry.controller.abort();
@@ -440,11 +449,11 @@ function registerIpc(): void {
     }
   });
 
-  ipcMain.handle("askUser:respond", async (_e, payload: AskUserResponsePayload) => {
+  api.handle("askUser:respond", async (_client, payload: AskUserResponsePayload) => {
     completeAskUser(payload);
   });
 
-  ipcMain.handle("providers:authStatus", async (_e, provider: Provider) => {
+  api.handle("providers:authStatus", async (_client, provider: Provider) => {
     const settings = await readSettings();
     const binPath =
       settings.providers?.[provider]?.binPath ??
@@ -452,27 +461,35 @@ function registerIpc(): void {
     return getProviderAuthStatus(provider, binPath);
   });
 
-  ipcMain.handle("providers:openLogin", async (_e, provider: Provider) => {
-    const settings = await readSettings();
-    const binPath =
-      settings.providers?.[provider]?.binPath ??
-      (provider === "claude" ? settings.claudeBinPath : undefined);
-    await openLoginTerminal(provider, binPath);
-  });
+  api.handle(
+    "providers:openLogin",
+    async (_client, provider: Provider) => {
+      const settings = await readSettings();
+      const binPath =
+        settings.providers?.[provider]?.binPath ??
+        (provider === "claude" ? settings.claudeBinPath : undefined);
+      await openLoginTerminal(provider, binPath);
+    },
+    "desktop-only",
+  );
 
-  ipcMain.handle("providers:codexRuntime", async () => {
+  api.handle("providers:codexRuntime", async () => {
     const settings = await readSettings();
     return getCodexRuntimeInfo(settings.providers?.codex?.binPath ?? "codex");
   });
 
-  ipcMain.handle("window:openCanvas", async (_e, canvasId?: string) => {
-    const hash = canvasId ? `/canvas/${canvasId}` : "/";
-    createWindow(hash);
-  });
+  api.handle(
+    "window:openCanvas",
+    async (_client, canvasId?: string) => {
+      const hash = canvasId ? `/canvas/${canvasId}` : "/";
+      createWindow(hash);
+    },
+    "desktop-only",
+  );
 
-  ipcMain.handle(
+  api.handle(
     "groupSummary:generate",
-    async (_e, args: GenerateGroupSummaryRequest) => {
+    async (_client, args: GenerateGroupSummaryRequest) => {
       const settings = await readSettings();
       const model =
         settings.providers?.claude?.model ?? settings.claudeModel ?? undefined;
@@ -491,9 +508,9 @@ function registerIpc(): void {
     },
   );
 
-  ipcMain.handle(
+  api.handle(
     "canvasName:generate",
-    async (_e, args: GenerateCanvasNameRequest) => {
+    async (_client, args: GenerateCanvasNameRequest) => {
       const settings = await readSettings();
       const model =
         settings.providers?.claude?.model ?? settings.claudeModel ?? undefined;
@@ -559,6 +576,7 @@ app.whenReady().then(async () => {
   }
 
   registerIpc();
+  bindRegistryToIpc(api, ipcMain, (sender) => desktopClient(sender));
   createWindow();
   initAutoUpdate();
   installUpdateMenuItem();
