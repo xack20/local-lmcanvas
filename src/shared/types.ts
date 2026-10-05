@@ -22,9 +22,41 @@ export type ImageBlock = {
   base64: string;
 };
 
-export type ContentBlock = TextBlock | ToolUseBlock | ThinkingBlock | ImageBlock;
 
-export type ErrorCode = "auth_required" | "policy_refusal";
+
+export type CompactionTrigger = "auto" | "manual" | "replay";
+
+/** A marker where the conversation was summarized (sizes in tokens, when known). */
+export type CompactionBlock = {
+  type: "compaction";
+  trigger: CompactionTrigger;
+  before: number | null;
+  after: number | null;
+  /** Replay only: whether older messages were summarized or left out. */
+  method?: "summary" | "trimmed";
+  /** A manual compaction's own cost (it is a real Claude call). */
+  usage?: UsageSummary;
+};
+
+export type ContentBlock = TextBlock | ToolUseBlock | ThinkingBlock | ImageBlock | CompactionBlock;
+
+export type ErrorCode = "auth_required" | "policy_refusal" | "prompt_too_long";
+
+export type ContextBreakdown = { setup: number; conversation: number; toolResults: number };
+
+/** What the model holds after a node's run (root→here), from Claude Code's getContextUsage(). */
+export type ContextSnapshot = {
+  tokens: number;
+  window: number;
+  autoCompactAt?: number;
+  autoCompactEnabled: boolean;
+  breakdown?: ContextBreakdown;
+  model?: string;
+  /** False for an estimate (older nodes, other providers, a failed measurement). */
+  exact: boolean;
+  measuredAt: number;
+};
+
 
 export type UsageSummary = {
   inputTokens?: number;
@@ -190,6 +222,8 @@ export type CanvasNode = {
     width?: number;
     /** Per-node overrides for provider / cwd / branch. Falls back to canvas defaults. */
     nodeSettings?: NodeSettings;
+    /** Context size after this node's last Claude run (combined, root→here). */
+    context?: ContextSnapshot;
   };
 };
 

@@ -41,6 +41,8 @@ export function blocksToPlainText(blocks: ContentBlock[]): string {
       parts.push(`[tool: ${tu.name}(${truncate(inputStr, 400)})${resultStr}]`);
     } else if (b.type === "thinking") {
       // omit thinking from history to keep prompts small
+    } else if (b.type === "compaction") {
+      // a marker, not conversation
     } else if (b.type === "image") {
       parts.push("[image]");
     }
@@ -151,7 +153,7 @@ function isProvider(value: unknown): value is Provider {
 }
 
 function isErrorCode(value: unknown): value is ErrorCode {
-  return value === "auth_required" || value === "policy_refusal";
+  return value === "auth_required" || value === "policy_refusal" || value === "prompt_too_long";
 }
 
 function parseModelFallback(value: unknown): ModelFallback | undefined {
