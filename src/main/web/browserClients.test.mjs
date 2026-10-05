@@ -1,6 +1,6 @@
 // .mjs keeps the bun:test import out of `bun run typecheck`.
 import { describe, expect, test } from "bun:test";
-import { createBrowserClientRegistry } from "./browserClients.ts";
+import { createBrowserClientRegistry, tabIdOf } from "./browserClients.ts";
 
 function manualScheduler() {
   let next = 1;
@@ -261,3 +261,33 @@ describe("createBrowserClientRegistry replay", () => {
   });
 });
 
+describe("createBrowserClientRegistry expire", () => {
+  test("expiring a tab ends its client at once and frees the id", () => {
+    const { registry, scheduler } = setup();
+    const socket = fakeSocket();
+    const { client } = registry.attach("tab1", "dev1", socket, 0);
+    let gone = 0;
+    client.onGone(() => gone++);
+
+    registry.expire("tab1");
+
+    expect(gone).toBe(1);
+    expect(client.isGone()).toBe(true);
+    expect(socket.closed).toBe(true);
+    expect(registry.get("tab1")).toBeUndefined();
+    expect(scheduler.pending()).toBe(0);
+    expect(registry.attach("tab1", "dev1", fakeSocket(), 0).resumed).toBe(false);
+  });
+
+  test("expiring an unknown tab does nothing", () => {
+    const { registry } = setup();
+    const { client } = registry.attach("tab1", "dev1", fakeSocket(), 0);
+    registry.expire("tab2");
+    expect(client.isGone()).toBe(false);
+  });
+
+  test("a client's tab id can be read back from it", () => {
+    const { registry } = setup();
+    expect(tabIdOf(registry.ensure("tab1", "dev1"))).toBe("tab1");
+  });
+});

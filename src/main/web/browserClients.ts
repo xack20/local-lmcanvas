@@ -7,6 +7,12 @@ export type SocketLike = { send(data: string): void; close(): void };
 export const REPLAY_MAX_EVENTS = 5_000;
 export const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
 
+const CLIENT_ID_PREFIX = "browser-";
+
+/** The tab id a browser client was registered under. */
+export const tabIdOf = (client: Pick<Client, "id">): string =>
+  client.id.startsWith(CLIENT_ID_PREFIX) ? client.id.slice(CLIENT_ID_PREFIX.length) : client.id;
+
 export type Scheduler = {
   setTimeout(fn: () => void, ms: number): unknown;
   clearTimeout(handle: unknown): void;
@@ -27,6 +33,8 @@ export type BrowserClientRegistry = {
     after?: number | null,
   ): { client: Client; resumed: boolean; seq: number };
   detach(clientId: string, socket: SocketLike): void;
+  /** Ends a tab's client now (its page was closed or reloaded), skipping the grace period. */
+  expire(clientId: string): void;
   expireDevice(deviceId: string): void;
   expireAll(): void;
   get(clientId: string): Client | undefined;
@@ -122,7 +130,7 @@ export function createBrowserClientRegistry(opts: {
       listeners: new Set(),
     };
     const client: Client = {
-      id: `browser-${clientId}`,
+      id: `${CLIENT_ID_PREFIX}${clientId}`,
       kind: "browser",
       send(channel, payload) {
         if (state.gone) return;
@@ -191,6 +199,7 @@ export function createBrowserClientRegistry(opts: {
       record.state.socket = null;
       startGrace(clientId, record.state);
     },
+    expire,
     expireDevice(deviceId) {
       for (const [clientId, record] of [...records]) {
         if (record.state.deviceId === deviceId) expire(clientId);

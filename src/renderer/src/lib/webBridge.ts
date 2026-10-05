@@ -32,7 +32,13 @@ export type WebSocketLike = {
 
 type FetchLike = (
   url: string,
-  init: { method: string; credentials: "same-origin"; headers: Record<string, string>; body: string },
+  init: {
+    method: string;
+    keepalive?: boolean;
+    credentials: "same-origin";
+    headers: Record<string, string>;
+    body: string;
+  },
 ) => Promise<{ status: number; json(): Promise<unknown> }>;
 
 export type WatchdogTimers = {
@@ -47,6 +53,8 @@ export type WebBridgeDeps = {
   clientId: string;
   schedule: (fn: () => void, ms: number) => void;
   timers: WatchdogTimers;
+  /** Calls `listener` when the page is hidden; `persisted` is true when it may come back (bfcache). */
+  onPageHide: (listener: (persisted: boolean) => void) => void;
   ui: {
     pickFolder(defaultPath?: string): Promise<string | null>;
     copyPath(path: string): Promise<void>;
@@ -151,17 +159,28 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
     };
   };
 
+  const request = (channel: string, args: unknown[], keepalive = false) =>
+    deps.fetchFn(`${deps.origin}/api/${encodeURIComponent(channel)}`, {
+      method: "POST",
+      ...(keepalive ? { keepalive } : {}),
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-LMC-Client": deps.clientId },
+      body: JSON.stringify({ args }),
+    });
+
   const send = async (channel: string, args: unknown[]) => {
     try {
-      return await deps.fetchFn(`${deps.origin}/api/${encodeURIComponent(channel)}`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-LMC-Client": deps.clientId },
-        body: JSON.stringify({ args }),
-      });
+      return await request(channel, args);
     } catch (error) {
       throw new TransportError(error);
     }
+  };
+
+  // A reloaded or closed page never comes back for this tab id, so let the Mac free
+  // its chats and locks now rather than after the grace period.
+  const sayGoodbye = (persisted: boolean): void => {
+    if (persisted) return;
+    request("client:bye", [], true).catch(() => undefined);
   };
 
   const call = async <T>(channel: string, ...args: unknown[]): Promise<T> => {
@@ -299,6 +318,7 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
     socket.onclose = onClosed;
   };
 
+  deps.onPageHide(sayGoodbye);
   deps.onConnection("connecting");
   connect();
 
@@ -384,6 +404,9 @@ export function installWebApiIfNeeded(): void {
     timers: {
       set: (fn, ms) => window.setTimeout(fn, ms),
       clear: (handle) => window.clearTimeout(handle as number),
+    },
+    onPageHide: (listener) => {
+      window.addEventListener("pagehide", (event) => listener(event.persisted));
     },
     ui: {
       pickFolder: pickFolderViaUi,

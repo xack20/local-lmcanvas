@@ -45,6 +45,7 @@ function harness(responses = {}) {
   const states = [];
   const ui = { picked: [], copied: [], opened: [], notices: [] };
   const timers = fakeTimers();
+  const pageHide = [];
   let seq = 0;
   const api = createWebApi({
     fetchFn: async (url, init) => {
@@ -70,6 +71,7 @@ function harness(responses = {}) {
     clientId: "client123456",
     schedule: (fn, ms) => scheduled.push({ fn, ms }),
     timers,
+    onPageHide: (listener) => pageHide.push(listener),
     ui: {
       pickFolder: async (start) => {
         ui.picked.push(start);
@@ -101,7 +103,8 @@ function harness(responses = {}) {
     reconnect: () => [...scheduled].reverse().find((s) => s.ms !== START_RECHECK_MS).fn(),
   };
   const isActiveCalls = () => fetchCalls.filter((c) => c.url.endsWith("/api/chat%3AisActive"));
-  return { api, net, fetchCalls, isActiveCalls, sockets, scheduled, states, ui, server, timers };
+  const hidePage = (persisted) => pageHide.forEach((listener) => listener(persisted));
+  return { api, net, fetchCalls, isActiveCalls, sockets, scheduled, states, ui, server, timers, hidePage };
 }
 
 const recheck = (h) => h.scheduled.filter((s) => s.ms === START_RECHECK_MS);
@@ -597,3 +600,32 @@ describe("createWebApi connection watchdog", () => {
   });
 });
 
+describe("createWebApi leaving the page", () => {
+  test("says goodbye when the page is unloaded, so the Mac frees this tab at once", () => {
+    const h = harness();
+    h.hidePage(false);
+    expect(h.fetchCalls).toHaveLength(1);
+    const { url, init } = h.fetchCalls[0];
+    expect(url).toBe(`${ORIGIN}/api/client%3Abye`);
+    expect(init).toEqual({
+      method: "POST",
+      keepalive: true,
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-LMC-Client": "client123456" },
+      body: '{"args":[]}',
+    });
+  });
+
+  test("stays registered when the page is only put in the back-forward cache", () => {
+    const h = harness();
+    h.hidePage(true);
+    expect(h.fetchCalls).toEqual([]);
+  });
+
+  test("a goodbye that can't be sent is dropped quietly", async () => {
+    const h = harness();
+    h.net.failing.add("client:bye");
+    expect(() => h.hidePage(false)).not.toThrow();
+    await flush();
+  });
+});

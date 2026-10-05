@@ -31,7 +31,7 @@ import {
 import { createActiveChats } from "./api/activeChats";
 import { desktopClient, type Client } from "./api/client";
 import { bindRegistryToIpc, createApiRegistry } from "./api/registry";
-import { createBrowserClientRegistry } from "./web/browserClients";
+import { createBrowserClientRegistry, tabIdOf } from "./web/browserClients";
 import { createCanvasLocks } from "./web/canvasLocks";
 import { loadDeviceStore } from "./web/devices";
 import { createWebServer } from "./web/server";
@@ -557,6 +557,16 @@ function registerIpc(): void {
 
   // Browser adapter only (settles chats whose start request dropped); not part of LmcApi or the preload.
   api.handle("chat:isActive", async (_client, chatId: unknown) => typeof chatId === "string" && activeChats.has(chatId), "shared");
+
+  // Browser adapter only: a tab whose page is closing or reloading frees its chats and locks now
+  // instead of after the reconnect grace period. A desktop window has nothing to say goodbye with.
+  api.handle(
+    "client:bye",
+    async (client) => {
+      if (client.kind === "browser") browserClients.expire(tabIdOf(client));
+    },
+    "shared",
+  );
 
   api.handle("askUser:respond", async (_client, payload: AskUserResponsePayload) => {
     completeAskUser(payload);
