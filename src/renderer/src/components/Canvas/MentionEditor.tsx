@@ -9,6 +9,7 @@ import {
   type WheelEvent,
 } from "react";
 import type { FileEntry, SlashItem } from "@shared/ipc";
+import { isImeComposing } from "@/lib/imeComposition";
 
 // A single piece of editor content. Mentions and slash chips are first-class
 // so callers can serialize them back to wire-format tokens at submit time.
@@ -497,6 +498,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, Props>(
     };
 
     const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+      if (isImeComposing(e)) return;
       if (onKeyDownExtra && onKeyDownExtra(e)) return;
       if (e.defaultPrevented) return;
       if (e.key === "Enter" && !e.shiftKey) {
