@@ -20,6 +20,8 @@ const HTTP_UNAUTHORIZED = 401;
 const START_RECHECK_MS = 3_000;
 const MIN_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 10_000;
+// The Mac sends a tick every 15 s, so this much silence means the connection is dead.
+export const WATCHDOG_MS = 45_000;
 
 export type WebSocketLike = {
   onopen: (() => void) | null;
@@ -33,12 +35,18 @@ type FetchLike = (
   init: { method: string; credentials: "same-origin"; headers: Record<string, string>; body: string },
 ) => Promise<{ status: number; json(): Promise<unknown> }>;
 
+export type WatchdogTimers = {
+  set(fn: () => void, ms: number): unknown;
+  clear(handle: unknown): void;
+};
+
 export type WebBridgeDeps = {
   fetchFn: FetchLike;
   openSocket: (url: string) => WebSocketLike;
   origin: string;
   clientId: string;
   schedule: (fn: () => void, ms: number) => void;
+  timers: WatchdogTimers;
   ui: {
     pickFolder(defaultPath?: string): Promise<string | null>;
     copyPath(path: string): Promise<void>;
@@ -49,8 +57,13 @@ export type WebBridgeDeps = {
 };
 
 type ServerMessage =
-  | { type: "welcome"; resumed: boolean }
-  | { type: "event"; channel: string; payload: unknown };
+  | { type: "welcome"; resumed: boolean; seq: number }
+  | { type: "tick" }
+  | { type: "event"; seq: number; channel: string; payload: unknown };
+
+const isCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isSeq = (value: unknown): value is number => isCount(value) && value > 0;
 
 function parseMessage(data: unknown): ServerMessage | null {
   if (typeof data !== "string") return null;
@@ -58,9 +71,12 @@ function parseMessage(data: unknown): ServerMessage | null {
     const value: unknown = JSON.parse(data);
     if (typeof value !== "object" || value === null) return null;
     const message = value as Record<string, unknown>;
-    if (message.type === "welcome") return { type: "welcome", resumed: message.resumed === true };
-    if (message.type === "event" && typeof message.channel === "string") {
-      return { type: "event", channel: message.channel, payload: message.payload };
+    if (message.type === "welcome") {
+      return { type: "welcome", resumed: message.resumed === true, seq: isCount(message.seq) ? message.seq : 0 };
+    }
+    if (message.type === "tick") return { type: "tick" };
+    if (message.type === "event" && typeof message.channel === "string" && isSeq(message.seq)) {
+      return { type: "event", seq: message.seq, channel: message.channel, payload: message.payload };
     }
     return null;
   } catch {
@@ -105,9 +121,12 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
   // chat:start request died in transit, so the Mac may or may not still be running them.
   let following = new Set<string>();
   let uncertain = new Set<string>();
-  // True from a welcome frame until the socket closes: the replay queue is drained.
+  // True from a welcome frame until the socket closes: anything missed has been replayed.
   let connected = false;
   let retryMs = MIN_RETRY_MS;
+  // The last event seq this tab processed; sent on reconnect so the Mac replays what came after.
+  let lastSeq = 0;
+  let watchdog: unknown = null;
 
   const emit = (channel: string, payload: unknown): void => {
     const doneId = channel === "chat:event" ? doneChatId(payload) : null;
@@ -173,7 +192,7 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
   };
 
   // "Not running" is only believed while connected: a chat that finished while the
-  // socket was down has its output waiting in the replay queue, not lost.
+  // socket was down has its output waiting to be replayed, not lost.
   const settleOne = async (chatId: string): Promise<void> => {
     const active = await queryActive(chatId);
     if (active === false && connected && uncertain.has(chatId)) stopChat(chatId);
@@ -210,32 +229,74 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
     }
   };
 
-  const onWelcome = (resumed: boolean): void => {
+  // `seq` is the Mac's count for this tab so far: 0 for a fresh client, or the
+  // point a client that couldn't be resumed continues from.
+  const onWelcome = (resumed: boolean, seq: number): void => {
     connected = true;
     deps.onConnection("connected");
-    if (resumed) void settleUncertain();
-    else stopFollowedChats();
+    if (resumed) {
+      void settleUncertain();
+      return;
+    }
+    stopFollowedChats();
+    lastSeq = seq;
+  };
+
+  const onFrame = (data: unknown): void => {
+    const message = parseMessage(data);
+    if (!message) return;
+    if (message.type === "welcome") return onWelcome(message.resumed, message.seq);
+    if (message.type === "tick" || message.seq <= lastSeq) return;
+    lastSeq = message.seq;
+    emit(message.channel, message.payload);
+  };
+
+  const disarmWatchdog = (): void => {
+    if (watchdog !== null) deps.timers.clear(watchdog);
+    watchdog = null;
+  };
+
+  const armWatchdog = (giveUp: () => void): void => {
+    disarmWatchdog();
+    watchdog = deps.timers.set(giveUp, WATCHDOG_MS);
   };
 
   const connect = (): void => {
     const socket = deps.openSocket(
-      `${deps.origin.replace(/^http/, "ws")}/ws?client=${encodeURIComponent(deps.clientId)}`,
+      `${deps.origin.replace(/^http/, "ws")}/ws?client=${encodeURIComponent(deps.clientId)}&after=${lastSeq}`,
     );
-    socket.onopen = () => {
-      retryMs = MIN_RETRY_MS;
-    };
-    socket.onmessage = (ev) => {
-      const message = parseMessage(ev.data);
-      if (!message) return;
-      if (message.type === "event") return emit(message.channel, message.payload);
-      onWelcome(message.resumed);
-    };
-    socket.onclose = () => {
+    let closed = false;
+    const onClosed = (): void => {
+      if (closed) return;
+      closed = true;
+      disarmWatchdog();
       connected = false;
       deps.onConnection("reconnecting");
       deps.schedule(connect, retryMs);
       retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
     };
+    // A dead connection can take minutes to report its close, so stop listening
+    // to it and reconnect now.
+    const giveUp = (): void => {
+      socket.onmessage = null;
+      socket.onclose = null;
+      try {
+        socket.close();
+      } catch (error) {
+        console.warn("[web] couldn't close a silent connection:", error);
+      }
+      onClosed();
+    };
+    armWatchdog(giveUp);
+    socket.onopen = () => {
+      retryMs = MIN_RETRY_MS;
+      armWatchdog(giveUp);
+    };
+    socket.onmessage = (ev) => {
+      armWatchdog(giveUp);
+      onFrame(ev.data);
+    };
+    socket.onclose = onClosed;
   };
 
   deps.onConnection("connecting");
@@ -319,6 +380,10 @@ export function installWebApiIfNeeded(): void {
     clientId: crypto.randomUUID().replace(/-/g, ""),
     schedule: (fn, ms) => {
       window.setTimeout(fn, ms);
+    },
+    timers: {
+      set: (fn, ms) => window.setTimeout(fn, ms),
+      clear: (handle) => window.clearTimeout(handle as number),
     },
     ui: {
       pickFolder: pickFolderViaUi,

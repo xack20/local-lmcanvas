@@ -10,7 +10,7 @@ import WebSocket from "ws";
 import { createApiRegistry } from "../api/registry.ts";
 import { createBrowserClientRegistry } from "./browserClients.ts";
 import { loadDeviceStore } from "./devices.ts";
-import { createWebServer } from "./server.ts";
+import { HEARTBEAT_MS, createWebServer } from "./server.ts";
 
 const HOST = "my-mac.tail1234.ts.net";
 const ORIGIN = `https://${HOST}`;
@@ -83,7 +83,7 @@ function rawUpgrade({ target, headers, targetPort = port, waitMs = 1000 }) {
   });
 }
 
-async function startIsolatedServer({ clients: isolatedClients, write, now }) {
+async function startIsolatedServer({ clients: isolatedClients, write, now, timers }) {
   const dir = mkdtempSync(join(tmpdir(), "lmc-isolated-"));
   mkdirSync(join(dir, "renderer"));
   writeFileSync(join(dir, "renderer", "index.html"), "<!doctype html><title>app</title>");
@@ -96,6 +96,7 @@ async function startIsolatedServer({ clients: isolatedClients, write, now }) {
     staticRoot: join(dir, "renderer"),
     homeDir: dir,
     now,
+    timers,
   });
   await isolated.listen(0);
   const { token } = store.createPairingToken(Date.now());
@@ -276,10 +277,13 @@ describe("folder listing", () => {
   });
 });
 
+const settle = () => new Promise((r) => setTimeout(r, 50));
+
 describe("live connection", () => {
-  const open = (client) =>
+  const open = (client, after) =>
     new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?client=${client}`, {
+      const query = after === undefined ? "" : `&after=${after}`;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?client=${client}${query}`, {
         headers: paired({ Origin: ORIGIN }),
       });
       const messages = [];
@@ -287,25 +291,39 @@ describe("live connection", () => {
       ws.on("open", () => resolve({ ws, messages }));
       ws.on("error", reject);
     });
-  const settle = () => new Promise((r) => setTimeout(r, 50));
 
-  test("welcomes a new tab, delivers events, and replays them after a reconnect", async () => {
-    const first = await open("tabws001");
+  test("welcomes a new tab, delivers numbered events, and replays what it missed after a reconnect", async () => {
+    const first = await open("tabws001", 0);
     await settle();
-    expect(first.messages).toEqual([{ type: "welcome", resumed: false }]);
+    expect(first.messages).toEqual([{ type: "welcome", resumed: false, seq: 0 }]);
     clients.get("tabws001").send("chat:event", { n: 1 });
     await settle();
-    expect(first.messages[1]).toEqual({ type: "event", channel: "chat:event", payload: { n: 1 } });
+    expect(first.messages[1]).toEqual({ type: "event", seq: 1, channel: "chat:event", payload: { n: 1 } });
     first.ws.close();
     await settle();
     clients.get("tabws001").send("chat:event", { n: 2 });
-    const second = await open("tabws001");
+    const second = await open("tabws001", 1);
     await settle();
     expect(second.messages).toEqual([
-      { type: "event", channel: "chat:event", payload: { n: 2 } },
-      { type: "welcome", resumed: true },
+      { type: "event", seq: 2, channel: "chat:event", payload: { n: 2 } },
+      { type: "welcome", resumed: true, seq: 2 },
     ]);
     second.ws.close();
+  });
+
+  test("an unreadable last seq is not resumed for a tab the server knows", async () => {
+    const first = await open("tabws004", 0);
+    await settle();
+    clients.get("tabws004").send("chat:event", { n: 1 });
+    first.ws.close();
+    await settle();
+    for (const after of ["abc", "-1", "1.5", "99999999999999999999"]) {
+      const again = await open("tabws004", after);
+      await settle();
+      expect(again.messages).toEqual([{ type: "welcome", resumed: false, seq: 1 }]);
+      again.ws.close();
+      await settle();
+    }
   });
 
   test("removing a device closes its live connection", async () => {
@@ -419,3 +437,105 @@ describe("a live connection that fails to register", () => {
     expect(page.status).toBe(200);
   });
 });
+
+function fakeIntervals() {
+  const started = [];
+  const cleared = [];
+  return {
+    started,
+    cleared,
+    setInterval(fn, ms) {
+      started.push({ fn, ms });
+      return started.length;
+    },
+    clearInterval(handle) {
+      cleared.push(handle);
+    },
+    sweep: () => started[started.length - 1].fn(),
+  };
+}
+
+function manualScheduler() {
+  const timers = new Map();
+  let next = 1;
+  return {
+    setTimeout(fn) {
+      const id = next++;
+      timers.set(id, fn);
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+    pending: () => timers.size,
+  };
+}
+
+describe("heartbeat", () => {
+  let isolated;
+  let timers;
+  let scheduler;
+  let hbClients;
+
+  beforeAll(async () => {
+    timers = fakeIntervals();
+    scheduler = manualScheduler();
+    hbClients = createBrowserClientRegistry({ graceMs: 60_000, scheduler });
+    isolated = await startIsolatedServer({ clients: hbClients, timers });
+  });
+
+  afterAll(() => isolated?.close());
+
+  test("sweeps every 15 s while listening", () => {
+    expect(HEARTBEAT_MS).toBe(15_000);
+    expect(timers.started.map((t) => t.ms)).toEqual([HEARTBEAT_MS]);
+  });
+
+  test("a live socket that answers pings stays open and gets an app-level tick each sweep", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${isolated.port}/ws?client=tabhb001&after=0`, {
+      headers: trusted({ Cookie: isolated.cookie, Origin: ORIGIN }),
+    });
+    const messages = [];
+    ws.on("message", (m) => messages.push(JSON.parse(m.toString())));
+    await new Promise((resolve, reject) => {
+      ws.on("open", resolve);
+      ws.on("error", reject);
+    });
+    await settle();
+    timers.sweep();
+    await settle();
+    timers.sweep();
+    await settle();
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(messages.filter((m) => m.type === "tick")).toHaveLength(2);
+    ws.close();
+    await settle();
+  });
+
+  test("a socket that stops answering pings is terminated and its tab's grace period starts", async () => {
+    const socket = connect(isolated.port, "127.0.0.1");
+    socket.on("error", () => {});
+    socket.write(upgradeRequest("/ws?client=tabhb002&after=0", trusted({ Cookie: isolated.cookie, Origin: ORIGIN })));
+    await new Promise((r) => socket.once("data", r));
+    const pendingBefore = scheduler.pending();
+    const client = hbClients.get("tabhb002");
+    expect(client).toBeDefined();
+
+    timers.sweep();
+    await settle();
+    expect(scheduler.pending()).toBe(pendingBefore);
+    timers.sweep();
+    await settle();
+
+    expect(scheduler.pending()).toBe(pendingBefore + 1);
+    expect(client.isGone()).toBe(false);
+    socket.destroy();
+  });
+
+  test("closing the server stops the heartbeat", async () => {
+    await isolated.close();
+    isolated = null;
+    expect(timers.cleared).toEqual([1]);
+  });
+});
+

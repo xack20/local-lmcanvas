@@ -29,12 +29,14 @@ function fakeSocket() {
   return socket;
 }
 
-const setup = () => {
+const setup = (bounds = {}) => {
   const scheduler = manualScheduler();
   const created = [];
-  const registry = createBrowserClientRegistry({ graceMs: 120_000, scheduler, onCreated: (c) => created.push(c) });
+  const registry = createBrowserClientRegistry({ graceMs: 120_000, scheduler, onCreated: (c) => created.push(c), ...bounds });
   return { scheduler, created, registry };
 };
+
+const seqs = (socket) => socket.messages.map((m) => m.seq);
 
 describe("createBrowserClientRegistry", () => {
   test("a new tab gets a fresh client whose events reach the socket", () => {
@@ -44,7 +46,7 @@ describe("createBrowserClientRegistry", () => {
     expect(resumed).toBe(false);
     expect(client.kind).toBe("browser");
     client.send("chat:event", { chatId: "c1", type: "start" });
-    expect(socket.messages).toEqual([{ type: "event", channel: "chat:event", payload: { chatId: "c1", type: "start" } }]);
+    expect(socket.messages).toEqual([{ type: "event", seq: 1, channel: "chat:event", payload: { chatId: "c1", type: "start" } }]);
     expect(created).toEqual([client]);
   });
 
@@ -56,10 +58,11 @@ describe("createBrowserClientRegistry", () => {
     client.send("chat:event", { n: 1 });
     client.send("chat:event", { n: 2 });
     const second = fakeSocket();
-    const again = registry.attach("tab1", "dev1", second);
+    const again = registry.attach("tab1", "dev1", second, 0);
     expect(again.resumed).toBe(true);
     expect(again.client).toBe(client);
     expect(second.messages.map((m) => m.payload.n)).toEqual([1, 2]);
+    expect(seqs(second)).toEqual([1, 2]);
   });
 
   test("a tab that never comes back is gone after the grace period", () => {
@@ -174,3 +177,87 @@ describe("createBrowserClientRegistry", () => {
     expect(client.isGone()).toBe(false);
   });
 });
+
+describe("createBrowserClientRegistry replay", () => {
+  test("events written to a socket the server still thinks is live are replayed after the tab's last seq", () => {
+    const { registry } = setup();
+    const first = fakeSocket();
+    const { client } = registry.attach("tab1", "dev1", first, 0);
+    client.send("chat:event", { n: 1 });
+    client.send("chat:event", { n: 2 });
+    client.send("chat:event", { n: 3 });
+    expect(seqs(first)).toEqual([1, 2, 3]);
+
+    const second = fakeSocket();
+    const again = registry.attach("tab1", "dev1", second, 1);
+
+    expect(again.resumed).toBe(true);
+    expect(again.seq).toBe(3);
+    expect(first.closed).toBe(true);
+    expect(seqs(second)).toEqual([2, 3]);
+    expect(second.messages.map((m) => m.payload.n)).toEqual([2, 3]);
+  });
+
+  test("a tab that is fully caught up gets nothing replayed and is resumed", () => {
+    const { registry } = setup();
+    const { client } = registry.attach("tab1", "dev1", fakeSocket(), 0);
+    client.send("chat:event", { n: 1 });
+    const second = fakeSocket();
+    expect(registry.attach("tab1", "dev1", second, 1).resumed).toBe(true);
+    expect(second.messages).toEqual([]);
+  });
+
+  test("keeps only the newest events by count, and a tab that needs a dropped one is not resumed", () => {
+    const { registry } = setup({ maxReplayEvents: 3 });
+    const first = fakeSocket();
+    const { client } = registry.attach("tab1", "dev1", first, 0);
+    registry.detach("tab1", first);
+    for (let n = 1; n <= 5; n++) client.send("chat:event", { n });
+
+    const behind = fakeSocket();
+    expect(registry.attach("tab1", "dev1", behind, 1)).toMatchObject({ resumed: false, seq: 5 });
+    expect(behind.messages).toEqual([]);
+
+    const justInTime = fakeSocket();
+    expect(registry.attach("tab1", "dev1", justInTime, 2).resumed).toBe(true);
+    expect(seqs(justInTime)).toEqual([3, 4, 5]);
+  });
+
+  test("keeps only the newest events by size", () => {
+    const { registry } = setup({ maxReplayBytes: 300 });
+    const { client } = registry.attach("tab1", "dev1", fakeSocket(), 0);
+    for (let n = 1; n <= 4; n++) client.send("chat:event", { text: "x".repeat(60) });
+    const later = fakeSocket();
+    expect(registry.attach("tab1", "dev1", later, 0).resumed).toBe(false);
+    const caughtUp = fakeSocket();
+    expect(registry.attach("tab1", "dev1", caughtUp, 2).resumed).toBe(true);
+    expect(seqs(caughtUp)).toEqual([3, 4]);
+  });
+
+  test("a tab that saw more than this client ever sent belongs to an expired one and is not resumed", () => {
+    const { registry } = setup();
+    registry.ensure("tab1", "dev1");
+    const socket = fakeSocket();
+    expect(registry.attach("tab1", "dev1", socket, 7)).toMatchObject({ resumed: false, seq: 0 });
+  });
+
+  test("an unreadable last seq never resumes an existing client", () => {
+    const { registry } = setup();
+    const first = fakeSocket();
+    const { client } = registry.attach("tab1", "dev1", first, 0);
+    client.send("chat:event", { n: 1 });
+    const second = fakeSocket();
+    expect(registry.attach("tab1", "dev1", second, null).resumed).toBe(false);
+    expect(second.messages).toEqual([]);
+  });
+
+  test("events sent before the first socket attaches reach it", () => {
+    const { registry } = setup();
+    const client = registry.ensure("tab1", "dev1");
+    client.send("chat:event", { n: 1 });
+    const socket = fakeSocket();
+    expect(registry.attach("tab1", "dev1", socket, 0).resumed).toBe(true);
+    expect(seqs(socket)).toEqual([1]);
+  });
+});
+

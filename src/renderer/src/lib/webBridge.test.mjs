@@ -4,8 +4,35 @@ import { CONNECTION_LOST_MESSAGE, LOGIN_ON_MAC_MESSAGE, createWebApi } from "./w
 
 const ORIGIN = "https://my-mac.tail1234.ts.net";
 const START_RECHECK_MS = 3000;
+const WATCHDOG_MS = 45_000;
 const PAIRING_MESSAGE = "This browser is no longer paired. Open a new pairing link from the Mac.";
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// A fake clock for the connection watchdog.
+function fakeTimers() {
+  let now = 0;
+  let next = 1;
+  const pending = new Map();
+  return {
+    set(fn, ms) {
+      const id = next++;
+      pending.set(id, { fn, at: now + ms });
+      return id;
+    },
+    clear(id) {
+      pending.delete(id);
+    },
+    advance(ms) {
+      now += ms;
+      for (const [id, timer] of [...pending]) {
+        if (timer.at > now || !pending.has(id)) continue;
+        pending.delete(id);
+        timer.fn();
+      }
+    },
+    pending: () => pending.size,
+  };
+}
 
 // `net` steers the fake network: channels in `failing` reject like a dropped
 // fetch (no HTTP response), `statuses` overrides the HTTP status per channel,
@@ -17,6 +44,8 @@ function harness(responses = {}) {
   const scheduled = [];
   const states = [];
   const ui = { picked: [], copied: [], opened: [], notices: [] };
+  const timers = fakeTimers();
+  let seq = 0;
   const api = createWebApi({
     fetchFn: async (url, init) => {
       fetchCalls.push({ url, init });
@@ -40,6 +69,7 @@ function harness(responses = {}) {
     origin: ORIGIN,
     clientId: "client123456",
     schedule: (fn, ms) => scheduled.push({ fn, ms }),
+    timers,
     ui: {
       pickFolder: async (start) => {
         ui.picked.push(start);
@@ -54,15 +84,24 @@ function harness(responses = {}) {
     onConnection: (state) => states.push(state),
   });
   const last = () => sockets[sockets.length - 1];
+  const frame = (message) => last().onmessage({ data: JSON.stringify(message) });
   const server = {
-    welcome: (resumed) => last().onmessage({ data: JSON.stringify({ type: "welcome", resumed }) }),
-    event: (channel, payload) => last().onmessage({ data: JSON.stringify({ type: "event", channel, payload }) }),
+    welcome: (resumed, seq) => frame({ type: "welcome", resumed, ...(seq === undefined ? {} : { seq }) }),
+    event: (channel, payload) => frame({ type: "event", seq: ++seq, channel, payload }),
+    // An event with an explicit seq; later `event` calls continue from it.
+    eventAt: (at, channel, payload) => {
+      seq = Math.max(seq, at);
+      frame({ type: "event", seq: at, channel, payload });
+    },
+    tick: () => frame({ type: "tick" }),
+    // A new server-side client numbers its events from 1 again.
+    restartNumbering: () => (seq = 0),
     drop: () => last().onclose(),
     // Runs the newest pending reconnect (not a chat recheck).
     reconnect: () => [...scheduled].reverse().find((s) => s.ms !== START_RECHECK_MS).fn(),
   };
   const isActiveCalls = () => fetchCalls.filter((c) => c.url.endsWith("/api/chat%3AisActive"));
-  return { api, net, fetchCalls, isActiveCalls, sockets, scheduled, states, ui, server };
+  return { api, net, fetchCalls, isActiveCalls, sockets, scheduled, states, ui, server, timers };
 }
 
 const recheck = (h) => h.scheduled.filter((s) => s.ms === START_RECHECK_MS);
@@ -87,7 +126,7 @@ describe("createWebApi calls", () => {
 describe("createWebApi live events", () => {
   test("connects to /ws with the tab id and reports the connection", () => {
     const h = harness();
-    expect(h.sockets[0].url).toBe("wss://my-mac.tail1234.ts.net/ws?client=client123456");
+    expect(h.sockets[0].url).toBe("wss://my-mac.tail1234.ts.net/ws?client=client123456&after=0");
     expect(h.states).toEqual(["connecting"]);
     h.server.welcome(false);
     expect(h.states).toEqual(["connecting", "connected"]);
@@ -420,3 +459,141 @@ describe("createWebApi pairing", () => {
     await expect(h.api.canvases.list()).rejects.toThrow(PAIRING_MESSAGE);
   });
 });
+
+describe("createWebApi event numbering", () => {
+  test("ignores an event it has already processed", () => {
+    const h = harness();
+    const chat = [];
+    h.api.chat.onEvent((ev) => chat.push(ev));
+    h.server.eventAt(1, "chat:event", { chatId: "c1", type: "text_delta", text: "a" });
+    h.server.eventAt(2, "chat:event", { chatId: "c1", type: "text_delta", text: "b" });
+    h.server.eventAt(2, "chat:event", { chatId: "c1", type: "text_delta", text: "b" });
+    h.server.eventAt(1, "chat:event", { chatId: "c1", type: "text_delta", text: "a" });
+    expect(chat.map((ev) => ev.text)).toEqual(["a", "b"]);
+  });
+
+  test("reconnects asking for everything after the last event it processed", () => {
+    const h = harness();
+    h.server.welcome(false);
+    h.server.eventAt(1, "chat:event", { chatId: "c1", type: "start" });
+    h.server.eventAt(2, "chat:event", { chatId: "c1", type: "text_delta", text: "hi" });
+    h.server.drop();
+    h.server.reconnect();
+    expect(h.sockets[1].url).toBe("wss://my-mac.tail1234.ts.net/ws?client=client123456&after=2");
+  });
+
+  test("a replay after reconnect delivers only the missed events", () => {
+    const h = harness();
+    const chat = [];
+    h.api.chat.onEvent((ev) => chat.push(ev));
+    h.server.welcome(false);
+    h.server.eventAt(1, "chat:event", { chatId: "c1", type: "text_delta", text: "a" });
+    h.server.drop();
+    h.server.reconnect();
+    h.server.eventAt(1, "chat:event", { chatId: "c1", type: "text_delta", text: "a" });
+    h.server.eventAt(2, "chat:event", { chatId: "c1", type: "text_delta", text: "b" });
+    h.server.welcome(true);
+    expect(chat.map((ev) => ev.text)).toEqual(["a", "b"]);
+  });
+
+  test("a tab the Mac no longer knows starts counting again after stopping its chats", async () => {
+    const h = harness();
+    const chat = [];
+    h.api.chat.onEvent((ev) => chat.push(ev));
+    await h.api.chat.start({ chatId: "c1" });
+    h.server.welcome(true);
+    h.server.eventAt(40, "chat:event", { chatId: "c1", type: "text_delta", text: "old" });
+    h.server.drop();
+    h.server.reconnect();
+    expect(h.sockets[1].url).toContain("&after=40");
+    h.server.welcome(false);
+    h.server.restartNumbering();
+    h.server.event("chat:event", { chatId: "c2", type: "text_delta", text: "new" });
+    expect(chat).toEqual([
+      { chatId: "c1", type: "text_delta", text: "old" },
+      ...syntheticStop("c1"),
+      { chatId: "c2", type: "text_delta", text: "new" },
+    ]);
+    h.server.drop();
+    h.server.reconnect();
+    expect(h.sockets[2].url).toContain("&after=1");
+  });
+
+  test("a tab the Mac still knows but can't resume continues from the Mac's count", async () => {
+    const h = harness();
+    const chat = [];
+    h.api.chat.onEvent((ev) => chat.push(ev));
+    await h.api.chat.start({ chatId: "c1" });
+    h.server.welcome(true);
+    h.server.eventAt(3, "chat:event", { chatId: "c1", type: "text_delta", text: "a" });
+    h.server.drop();
+    h.server.reconnect();
+    h.server.welcome(false, 6000);
+    expect(chat.slice(1)).toEqual(syntheticStop("c1"));
+    h.server.drop();
+    h.server.reconnect();
+    expect(h.sockets[2].url).toContain("&after=6000");
+  });
+
+  test("an event frame without a usable seq is ignored", () => {
+    const h = harness();
+    const chat = [];
+    h.api.chat.onEvent((ev) => chat.push(ev));
+    for (const seq of [undefined, 0, -1, 1.5, "3"]) {
+      h.sockets[0].onmessage({ data: JSON.stringify({ type: "event", seq, channel: "chat:event", payload: { chatId: "c1" } }) });
+    }
+    expect(chat).toEqual([]);
+  });
+});
+
+describe("createWebApi connection watchdog", () => {
+  test("closes a socket that has been silent for 45 s and reconnects", () => {
+    const h = harness();
+    h.server.welcome(true);
+    h.timers.advance(WATCHDOG_MS - 1);
+    expect(h.sockets[0].closed).toBe(false);
+    h.timers.advance(1);
+    expect(h.sockets[0].closed).toBe(true);
+    expect(h.states[h.states.length - 1]).toBe("reconnecting");
+    h.server.reconnect();
+    expect(h.sockets).toHaveLength(2);
+  });
+
+  test("ticks keep a quiet connection alive", () => {
+    const h = harness();
+    h.server.welcome(true);
+    h.timers.advance(30_000);
+    h.server.tick();
+    h.timers.advance(30_000);
+    h.server.tick();
+    h.timers.advance(30_000);
+    expect(h.sockets[0].closed).toBe(false);
+    h.timers.advance(15_000);
+    expect(h.sockets[0].closed).toBe(true);
+  });
+
+  test("a socket that never opens is given up on too", () => {
+    const h = harness();
+    h.timers.advance(WATCHDOG_MS);
+    expect(h.sockets[0].closed).toBe(true);
+    expect(h.scheduled).toHaveLength(1);
+  });
+
+  test("a late close from a socket the watchdog gave up on does not schedule a second reconnect", () => {
+    const h = harness();
+    h.server.welcome(true);
+    const stale = h.sockets[0];
+    h.timers.advance(WATCHDOG_MS);
+    expect(h.scheduled).toHaveLength(1);
+    stale.onclose?.();
+    expect(h.scheduled).toHaveLength(1);
+  });
+
+  test("a closed connection leaves no watchdog running", () => {
+    const h = harness();
+    h.server.welcome(true);
+    h.server.drop();
+    expect(h.timers.pending()).toBe(0);
+  });
+});
+

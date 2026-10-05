@@ -11,8 +11,14 @@ import { checkRequest, readCookie, type GateContext } from "./security";
 export const BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 export const DEVICE_COOKIE = "lmc_device";
 export const CLIENT_HEADER = "x-lmc-client";
+/** How often live sockets are pinged (dead ones dropped) and sent an app-level tick. */
+export const HEARTBEAT_MS = 15_000;
+/** The browser only ever sends tiny frames (it never sends any today). */
+export const WS_MAX_PAYLOAD_BYTES = 4096;
 const COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+const LAST_SEQ_PATTERN = /^\d{1,16}$/;
+const TICK_FRAME = JSON.stringify({ type: "tick" });
 const HTML = "text/html; charset=utf-8";
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -38,6 +44,16 @@ const EXPIRED_PAIR_PAGE = page(
   "Create a new one in LMCanvas on your Mac: Settings → Browser access → Pair a device.",
 );
 
+export type IntervalTimers = {
+  setInterval(fn: () => void, ms: number): unknown;
+  clearInterval(handle: unknown): void;
+};
+
+const realIntervals: IntervalTimers = {
+  setInterval: (fn, ms) => setInterval(fn, ms),
+  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+};
+
 export type WebServerDeps = {
   registry: ApiRegistry;
   clients: BrowserClientRegistry;
@@ -47,6 +63,7 @@ export type WebServerDeps = {
   homeDir: string;
   bodyLimitBytes?: number;
   now?: () => number;
+  timers?: IntervalTimers;
 };
 
 export type WebServer = {
@@ -107,14 +124,52 @@ function isArgsBody(value: unknown): value is { args: unknown[] } {
   return typeof value === "object" && value !== null && Array.isArray((value as { args?: unknown }).args);
 }
 
+/** The last event seq a reconnecting tab processed: 0 when absent, null when unreadable. */
+function parseLastSeq(raw: string | null): number | null {
+  if (raw === null) return 0;
+  if (!LAST_SEQ_PATTERN.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
 export function createWebServer(deps: WebServerDeps): WebServer {
   const now = deps.now ?? Date.now;
   const limit = deps.bodyLimitBytes ?? BODY_LIMIT_BYTES;
+  const timers = deps.timers ?? realIntervals;
   const staticRoot = resolve(deps.staticRoot);
   const homeDir = resolve(deps.homeDir);
-  const wss = new WebSocketServer({ noServer: true, maxPayload: limit });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
   const sockets = new Map<WebSocket, string>();
+  // Sockets pinged by the last sweep that haven't answered yet.
+  const awaitingPong = new Set<WebSocket>();
   let server: Server | null = null;
+  let heartbeat: unknown = null;
+
+  // Behind Tailscale Serve a vanished browser (lid closed, network gone) may
+  // never close its socket, so silence for a whole sweep counts as gone.
+  // Terminating runs the normal close path: detach, then the grace period.
+  const sweep = (): void => {
+    for (const ws of [...sockets.keys()]) {
+      if (awaitingPong.has(ws)) {
+        awaitingPong.delete(ws);
+        ws.terminate();
+        continue;
+      }
+      awaitingPong.add(ws);
+      try {
+        ws.ping();
+        ws.send(TICK_FRAME);
+      } catch (error) {
+        console.warn("[web] live connection heartbeat failed:", error instanceof Error ? error.message : error);
+      }
+    }
+  };
+
+  const stopHeartbeat = (): void => {
+    if (heartbeat === null) return;
+    timers.clearInterval(heartbeat);
+    heartbeat = null;
+  };
 
   type Authorized = { ok: true; deviceId: string | null } | { ok: false; status: number };
 
@@ -259,6 +314,7 @@ export function createWebServer(deps: WebServerDeps): WebServer {
       const clientId = url.searchParams.get("client") ?? "";
       if (!auth.deviceId || !CLIENT_ID_PATTERN.test(clientId)) return refuseUpgrade(socket, 400);
       const deviceId = auth.deviceId;
+      const lastSeq = parseLastSeq(url.searchParams.get("after"));
       wss.handleUpgrade(req, socket, head, (ws) => {
         ws.on("error", (error) => {
           console.warn("[web] live connection error:", error.message);
@@ -266,13 +322,15 @@ export function createWebServer(deps: WebServerDeps): WebServer {
         });
         const tracked: SocketLike = { send: (data) => ws.send(data), close: () => ws.close() };
         sockets.set(ws, deviceId);
+        ws.on("pong", () => awaitingPong.delete(ws));
         ws.on("close", () => {
           sockets.delete(ws);
+          awaitingPong.delete(ws);
           deps.clients.detach(clientId, tracked);
         });
         try {
-          const { resumed } = deps.clients.attach(clientId, deviceId, tracked);
-          ws.send(JSON.stringify({ type: "welcome", resumed }));
+          const { resumed, seq } = deps.clients.attach(clientId, deviceId, tracked, lastSeq);
+          ws.send(JSON.stringify({ type: "welcome", resumed, seq }));
         } catch (error) {
           console.warn("[web] live connection setup failed:", error instanceof Error ? error.message : error);
           ws.terminate();
@@ -300,13 +358,17 @@ export function createWebServer(deps: WebServerDeps): WebServer {
           created.off("error", reject);
           created.on("error", (error) => console.error("[web] server error:", error));
           server = created;
+          stopHeartbeat();
+          heartbeat = timers.setInterval(sweep, HEARTBEAT_MS);
           resolveListen();
         });
       }),
     close: () =>
       new Promise((resolveClose) => {
+        stopHeartbeat();
         for (const ws of sockets.keys()) ws.terminate();
         sockets.clear();
+        awaitingPong.clear();
         const current = server;
         server = null;
         if (!current) return resolveClose();

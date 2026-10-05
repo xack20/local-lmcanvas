@@ -2,6 +2,11 @@ import type { Client } from "../api/client";
 
 export type SocketLike = { send(data: string): void; close(): void };
 
+// Sent events are kept so a tab that reconnects can be sent what it missed,
+// even events written into a socket that had silently died. Bounded per tab.
+export const REPLAY_MAX_EVENTS = 5_000;
+export const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
+
 export type Scheduler = {
   setTimeout(fn: () => void, ms: number): unknown;
   clearTimeout(handle: unknown): void;
@@ -9,17 +14,33 @@ export type Scheduler = {
 
 export type BrowserClientRegistry = {
   ensure(clientId: string, deviceId: string): Client;
-  attach(clientId: string, deviceId: string, socket: SocketLike): { client: Client; resumed: boolean };
+  /**
+   * `after` is the last event seq the tab processed (null when unreadable). The
+   * tab is resumed, and sent every kept event after it, only when this client
+   * still has everything the tab is missing. `seq` is the last seq sent so far:
+   * a tab that isn't resumed continues counting from there.
+   */
+  attach(
+    clientId: string,
+    deviceId: string,
+    socket: SocketLike,
+    after?: number | null,
+  ): { client: Client; resumed: boolean; seq: number };
   detach(clientId: string, socket: SocketLike): void;
   expireDevice(deviceId: string): void;
   expireAll(): void;
   get(clientId: string): Client | undefined;
 };
 
+type SentEvent = { seq: number; frame: string; bytes: number };
+
 type ClientState = {
   deviceId: string;
   socket: SocketLike | null;
-  queue: string[];
+  lastSeq: number;
+  /** Oldest first; appended in place because every streamed token passes through here. */
+  sent: SentEvent[];
+  sentBytes: number;
   timer: unknown;
   gone: boolean;
   listeners: Set<() => void>;
@@ -36,9 +57,29 @@ export function createBrowserClientRegistry(opts: {
   graceMs: number;
   scheduler?: Scheduler;
   onCreated?: (client: Client) => void;
+  maxReplayEvents?: number;
+  maxReplayBytes?: number;
 }): BrowserClientRegistry {
   const scheduler = opts.scheduler ?? realScheduler;
+  const maxEvents = opts.maxReplayEvents ?? REPLAY_MAX_EVENTS;
+  const maxBytes = opts.maxReplayBytes ?? REPLAY_MAX_BYTES;
   const records = new Map<string, ClientRecord>();
+
+  const keep = (state: ClientState, event: SentEvent): void => {
+    state.sent.push(event);
+    state.sentBytes += event.bytes;
+    let drop = 0;
+    while (drop < state.sent.length && (state.sent.length - drop > maxEvents || state.sentBytes > maxBytes)) {
+      state.sentBytes -= state.sent[drop].bytes;
+      drop++;
+    }
+    if (drop > 0) state.sent.splice(0, drop);
+  };
+
+  const oldestKept = (state: ClientState): number => state.sent[0]?.seq ?? state.lastSeq + 1;
+
+  const canResume = (state: ClientState, after: number | null): boolean =>
+    after !== null && after <= state.lastSeq && after >= oldestKept(state) - 1;
 
   const expire = (clientId: string): void => {
     const record = records.get(clientId);
@@ -53,7 +94,8 @@ export function createBrowserClientRegistry(opts: {
       console.error("[web] browser client cleanup failed:", error);
     }
     state.socket = null;
-    state.queue = [];
+    state.sent = [];
+    state.sentBytes = 0;
     for (const listener of [...state.listeners]) {
       try {
         listener();
@@ -72,7 +114,9 @@ export function createBrowserClientRegistry(opts: {
     const state: ClientState = {
       deviceId,
       socket: null,
-      queue: [],
+      lastSeq: 0,
+      sent: [],
+      sentBytes: 0,
       timer: undefined,
       gone: false,
       listeners: new Set(),
@@ -82,9 +126,11 @@ export function createBrowserClientRegistry(opts: {
       kind: "browser",
       send(channel, payload) {
         if (state.gone) return;
-        const message = JSON.stringify({ type: "event", channel, payload });
-        if (state.socket) state.socket.send(message);
-        else state.queue = [...state.queue, message];
+        const seq = state.lastSeq + 1;
+        const frame = JSON.stringify({ type: "event", seq, channel, payload });
+        state.lastSeq = seq;
+        keep(state, { seq, frame, bytes: Buffer.byteLength(frame) });
+        state.socket?.send(frame);
       },
       isGone: () => state.gone,
       onGone(listener) {
@@ -116,11 +162,11 @@ export function createBrowserClientRegistry(opts: {
       startGrace(clientId, record.state);
       return record.client;
     },
-    attach(clientId, deviceId, socket) {
+    attach(clientId, deviceId, socket, after = 0) {
       const existing = sameDevice(clientId, deviceId);
-      const resumed = existing !== undefined;
       const record = existing ?? create(clientId, deviceId);
       const { state } = record;
+      const resumed = existing !== undefined && canResume(state, after);
       scheduler.clearTimeout(state.timer);
       state.timer = undefined;
       const oldSocket = state.socket;
@@ -132,10 +178,12 @@ export function createBrowserClientRegistry(opts: {
           console.error("[web] browser client cleanup failed:", error);
         }
       }
-      const pending = state.queue;
-      state.queue = [];
-      for (const message of pending) socket.send(message);
-      return { client: record.client, resumed };
+      if (resumed) {
+        for (const event of state.sent) {
+          if (event.seq > (after ?? 0)) socket.send(event.frame);
+        }
+      }
+      return { client: record.client, resumed, seq: state.lastSeq };
     },
     detach(clientId, socket) {
       const record = records.get(clientId);
