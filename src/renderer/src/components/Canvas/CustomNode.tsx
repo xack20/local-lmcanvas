@@ -13,6 +13,7 @@ import { PowerBadge } from "./PowerBadge";
 import { ClaudeEffortBadge } from "./ClaudeEffortBadge";
 import { ContextBadge } from "./ContextBadge";
 import { ContextBar } from "./ContextBar";
+import { CompactActions } from "./CompactActions";
 import { BranchBadge } from "./BranchBadge";
 import { PlanBadge } from "./PlanBadge";
 import { OnboardingTitle } from "./OnboardingTitle";
@@ -48,6 +49,8 @@ function CustomNodeImpl(props: NodeProps) {
   const removeNode = useCanvasStore((s) => s.removeNode);
   const patchNode = useCanvasStore((s) => s.patchNode);
   const compacting = useCanvasStore((s) => s.compactingNodeIds[id] === true);
+  const compactError = useCanvasStore((s) => s.compactErrors[id]);
+  const setCompactError = useCanvasStore((s) => s.setCompactError);
   const merging = useCanvasStore((s) => s.merging);
   const mergeIds = useCanvasStore((s) => s.mergeIds);
   const startMerge = useCanvasStore((s) => s.startMerge);
@@ -231,7 +234,7 @@ function CustomNodeImpl(props: NodeProps) {
           <ModelBadge nodeId={id} />
           <PowerBadge nodeId={id} />
           <ClaudeEffortBadge nodeId={id} />
-          <ContextBadge nodeId={id} />
+          <ContextBadge nodeId={id} actions={(close) => <CompactActions nodeId={id} onStart={close} />} />
           <FolderBadge nodeId={id} />
           <BranchBadge nodeId={id} />
           <FastBadge nodeId={id} />
@@ -349,6 +352,20 @@ function CustomNodeImpl(props: NodeProps) {
             </div>
           )}
           {askUserRequest && <AskUserPrompt request={askUserRequest} />}
+          {compactError && (
+            <div className="mt-2 flex items-start gap-1.5 text-[10px] text-red-600 dark:text-red-400">
+              <span className="flex-1">{compactError}</span>
+              <button
+                type="button"
+                onClick={() => setCompactError(id, undefined)}
+                className="cursor-pointer text-muted-foreground hover:text-foreground"
+                aria-label="Dismiss"
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+          )}
         </div>
 
         {selection && (

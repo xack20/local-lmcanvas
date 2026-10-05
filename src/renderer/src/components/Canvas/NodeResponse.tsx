@@ -194,6 +194,13 @@ export function NodeResponse({
         </div>
       )}
 
+      {compacting && !isStreaming && (
+        <div className="flex items-center gap-1.5 pt-0.5 text-[10px] text-muted-foreground">
+          <Loader2 size={12} className="animate-spin" />
+          <span className="node-shimmer font-medium">Compacting conversation…</span>
+        </div>
+      )}
+
       {isError && message.error && <ErrorBlock message={message} />}
 
       {message.suggestions && message.suggestions.length > 0 && onSuggestionClick && (

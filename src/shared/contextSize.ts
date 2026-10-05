@@ -6,6 +6,8 @@ export const DEFAULT_SETUP_TOKENS = 20_000;
 export const DEFAULT_WINDOW = 200_000;
 export const WARN_AT = 0.7;
 export const FULL_AT = 0.9;
+/** Longest focus text a manual compaction accepts. */
+export const MAX_COMPACT_FOCUS_CHARS = 500;
 
 export type ContextLevel = "ok" | "warn" | "full";
 

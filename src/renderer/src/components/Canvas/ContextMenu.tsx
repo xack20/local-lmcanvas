@@ -1,7 +1,10 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Plus, Timer, Trash2 } from "lucide-react";
+import { Minimize2, Plus, ScrollText, Timer, Trash2 } from "lucide-react";
 import type { MenuOption } from "@/hooks/useContextMenu";
+import { useCanvasStore } from "@/hooks/useCanvasStore";
+import { useCompactActions } from "@/hooks/useCompactActions";
+import { canCompact } from "@/lib/compactNode";
 
 type ContextMenuOption = MenuOption & {
   id: string;
@@ -27,6 +30,14 @@ export const ContextMenu = ({
 }: ContextMenuProps) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjustedPosition, setAdjustedPosition] = useState(position);
+  const compact = useCompactActions();
+  // A Claude node with a session can be compacted; the options are disabled while it's busy.
+  const hasClaudeSession = useCanvasStore((s) =>
+    rightClickedNodeId !== null &&
+    s.getEffectiveProvider(rightClickedNodeId) === "claude" &&
+    s.nodes[rightClickedNodeId]?.data.chat.providerSession?.provider === "claude",
+  );
+  const compactReady = useCanvasStore((s) => rightClickedNodeId !== null && canCompact(s, rightClickedNodeId));
 
   const menuOptions = useMemo<ContextMenuOption[]>(
     () => [
@@ -46,6 +57,24 @@ export const ContextMenu = ({
         onClick: () => createNodeAtPointer({ isTemporary: true }),
         icon: <Timer className="h-4 w-4" />,
       },
+      ...(rightClickedNodeId && hasClaudeSession
+        ? [
+            {
+              id: "compact_node",
+              label: "Compact this node",
+              onClick: () => void compact(rightClickedNodeId, "inPlace"),
+              disabled: !compactReady,
+              icon: <Minimize2 className="h-4 w-4" />,
+            },
+            {
+              id: "continue_from_summary",
+              label: "Continue from summary",
+              onClick: () => void compact(rightClickedNodeId, "summaryNode"),
+              disabled: !compactReady,
+              icon: <ScrollText className="h-4 w-4" />,
+            },
+          ]
+        : []),
       ...(rightClickedNodeId
         ? [
             {
@@ -57,7 +86,7 @@ export const ContextMenu = ({
           ]
         : []),
     ],
-    [rightClickedNodeId, createNodeAtPointer, deleteNodeAtPointer]
+    [rightClickedNodeId, createNodeAtPointer, deleteNodeAtPointer, hasClaudeSession, compactReady, compact]
   );
 
   useLayoutEffect(() => {

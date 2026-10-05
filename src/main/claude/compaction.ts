@@ -1,12 +1,12 @@
 import { query, type HookCallback, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { CompactResult } from "@shared/ipc";
+import { MAX_COMPACT_FOCUS_CHARS } from "@shared/contextSize";
 import { normalizeUsage } from "../agents/usage";
 import { measureContext } from "./contextUsage";
 import { heldOpenPrompt } from "./heldOpenPrompt";
 import { mapSystemMessage } from "./systemEvents";
 
 const COMPACTION_TIMEOUT_MS = 10 * 60_000;
-const MAX_FOCUS_CHARS = 500;
 
 export type CompactionRequest = {
   executable?: string;
@@ -22,7 +22,7 @@ export type CompactionRequest = {
 export function compactFocus(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
   const line = raw.replace(/\s+/g, " ").trim();
-  return line.length > 0 && line.length <= MAX_FOCUS_CHARS ? line : undefined;
+  return line.length > 0 && line.length <= MAX_COMPACT_FOCUS_CHARS ? line : undefined;
 }
 
 /** Claude Code's summary opens with its working notes; keep the summary itself. */

@@ -33,6 +33,7 @@ import { isCanvasLockedError } from "@shared/canvasLock";
 import { getEdgeHandles } from "@/lib/edgeHandles";
 import type { CanvasLockState, LockHolderKind } from "@/lib/lockText";
 import { FALLBACK_NODE_HEIGHT, VERTICAL_CHILD_OFFSET } from "@/lib/canvasConstants";
+import { keyboardBranchPosition } from "@/lib/childPlacement";
 import { useRecentsStore } from "@/hooks/useRecentsStore";
 import { createCanvasLockClaim, isCanvasLockClaimed, type CanvasLockClaim } from "@/lib/lockClaims";
 
@@ -66,6 +67,8 @@ export type CanvasStoreState = {
   releaseWhenIdle: boolean;
   /** Nodes Claude Code is compacting right now (not saved). */
   compactingNodeIds: Record<NodeId, true>;
+  /** Why the last manual compaction of a node failed (not saved). */
+  compactErrors: Record<NodeId, string>;
   pendingPrefills: Record<NodeId, PendingPrefill>;
   searchHighlights: Map<NodeId, Set<string>>;
   setSearchHighlights: (nodeId: NodeId, textMatches: string[]) => void;
@@ -130,6 +133,19 @@ export type CanvasStoreState = {
   setProviderSession: (nodeId: NodeId, session: ProviderSessionRef) => void;
   setNodeContext: (nodeId: NodeId, context: ContextSnapshot | undefined) => void;
   setCompacting: (nodeId: NodeId, active: boolean) => void;
+  setCompactError: (nodeId: NodeId, error: string | undefined) => void;
+  /** Adds a child holding Claude's summary of `parentId`'s branch, on the compacted fork's session. */
+  createSummaryNode: (
+    parentId: NodeId,
+    input: {
+      summary: string;
+      sessionId: string;
+      context: ContextSnapshot | null;
+      before: number | null;
+      after: number | null;
+      usage?: UsageSummary;
+    },
+  ) => NodeId | null;
   finalizeMessage: (nodeId: NodeId, messageId: string) => void;
   errorMessage: (
     nodeId: NodeId,
@@ -309,6 +325,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       runningChats: new Set(),
       releaseWhenIdle: false,
       compactingNodeIds: {},
+      compactErrors: {},
       pendingPrefills: {},
       searchHighlights: new Map(),
       merging: false,
@@ -465,6 +482,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           lockReplyRunning: lock.ok ? false : lock.replyRunning === true,
           dirty: { count: 0, lastChangeAt: 0 },
           compactingNodeIds: {},
+          compactErrors: {},
         });
         if (!lock.ok) get().setSelectedNodeIds([]);
         const prompt = isUnnamedCanvasName(canvas.name)
@@ -908,6 +926,53 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           const { [nodeId]: _done, ...rest } = s.compactingNodeIds;
           return { compactingNodeIds: rest };
         });
+      },
+
+      setCompactError: (nodeId, error) => {
+        set((s) => {
+          if (error !== undefined) return { compactErrors: { ...s.compactErrors, [nodeId]: error } };
+          if (!(nodeId in s.compactErrors)) return s;
+          const { [nodeId]: _cleared, ...rest } = s.compactErrors;
+          return { compactErrors: rest };
+        });
+      },
+
+      createSummaryNode: (parentId, input) => {
+        const parent = get().nodes[parentId];
+        if (!parent) return null;
+        const child = makeBlankNode(keyboardBranchPosition(parent), parentId);
+        const now = Date.now();
+        const summaryNode: CanvasNode = {
+          ...child,
+          data: {
+            ...child.data,
+            title: "Summary",
+            ...(parent.data.nodeSettings ? { nodeSettings: { ...parent.data.nodeSettings } } : {}),
+            ...(input.context ? { context: input.context } : {}),
+            chat: {
+              ...child.data.chat,
+              providerSession: { provider: "claude", id: input.sessionId },
+              messages: [
+                { id: `${child.id}-u`, role: "user", createdAt: now, blocks: [{ type: "text", text: "Continue from summary" }] },
+                {
+                  id: `${child.id}-a`,
+                  role: "assistant",
+                  createdAt: now,
+                  status: "complete",
+                  provider: "claude",
+                  ...(input.usage ? { usage: input.usage } : {}),
+                  blocks: [
+                    { type: "compaction", trigger: "manual", before: input.before, after: input.after },
+                    { type: "text", text: input.summary },
+                  ],
+                },
+              ],
+            },
+          },
+        };
+        get().addNode(summaryNode);
+        get().connectEdge(parentId, summaryNode.id);
+        return summaryNode.id;
       },
 
       setProviderSession: (nodeId, session) => {
