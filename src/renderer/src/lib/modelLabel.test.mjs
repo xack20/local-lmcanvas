@@ -1,6 +1,6 @@
 // .mjs keeps the bun:test import out of `bun run typecheck`.
 import { describe, expect, test } from "bun:test";
-import { claudeModelLabel } from "./modelLabel.ts";
+import { claudeModelBadgeLabel, claudeModelLabel } from "./modelLabel.ts";
 
 describe("claudeModelLabel", () => {
   test.each([
@@ -62,5 +62,29 @@ describe("claudeModelLabel", () => {
     "qwen3-haiku-32b",
   ])("returns non-Claude id %s unchanged", (id) => {
     expect(claudeModelLabel(id)).toBe(id);
+  });
+});
+
+describe("claudeModelBadgeLabel", () => {
+  const MODELS = [
+    { value: "default", displayName: "Default (recommended)", description: "", resolvedModel: "claude-opus-5-5", supportedEffortLevels: [] },
+    { value: "opus", displayName: "Opus 5.5", description: "", resolvedModel: "claude-opus-5-5", supportedEffortLevels: [] },
+    { value: "claude-sonnet-4-6", displayName: "Sonnet 4.6", description: "", supportedEffortLevels: [] },
+  ];
+
+  test("names Claude Code's default by the model it resolves to", () => {
+    expect(claudeModelBadgeLabel(MODELS, undefined)).toBe("Opus 5.5");
+    expect(claudeModelBadgeLabel(MODELS, "default")).toBe("Opus 5.5");
+  });
+
+  test("uses Claude Code's display name for a listed alias or id", () => {
+    expect(claudeModelBadgeLabel(MODELS, "opus")).toBe("Opus 5.5");
+    expect(claudeModelBadgeLabel(MODELS, "claude-sonnet-4-6")).toBe("Sonnet 4.6");
+    expect(claudeModelBadgeLabel(MODELS, "claude-opus-5-5")).toBe("Opus 5.5");
+  });
+
+  test("falls back to parsing the id, or Default, without a list", () => {
+    expect(claudeModelBadgeLabel([], "claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
+    expect(claudeModelBadgeLabel([], undefined)).toBe("Default");
   });
 });

@@ -171,6 +171,7 @@ function hasNodeSettings(settings: NodeSettings): boolean {
     settings.branch !== undefined ||
     settings.planMode !== undefined ||
     settings.chatOnly !== undefined ||
+    settings.model !== undefined ||
     settings.reasoningEffort !== undefined ||
     settings.serviceTier !== undefined
   );
@@ -504,6 +505,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
             else if (key === "branch") merged.branch = value as string;
             else if (key === "planMode") merged.planMode = value as boolean;
             else if (key === "chatOnly") merged.chatOnly = value as boolean;
+            else if (key === "model") merged.model = value as string;
             else if (key === "reasoningEffort") {
               merged.reasoningEffort = value as NodeSettings["reasoningEffort"];
             } else if (key === "serviceTier") {

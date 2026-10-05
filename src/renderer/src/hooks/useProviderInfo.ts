@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { PROVIDERS, type AppSettings, type Provider } from "@shared/types";
 import { claudeModelLabel } from "@/lib/modelLabel";
+import { onSettingsChanged } from "@/lib/settingsEvents";
 
 export type ProviderInfoState = {
   provider: Provider;
   label: string;
   labelsByProvider: Record<Provider, string>;
+  /** Claude model set in Settings; undefined means Claude Code's own default. */
+  claudeModelId: string | undefined;
 };
 
-const DEFAULT_MODEL_BY_PROVIDER: Record<Provider, string> = {
-  claude: "claude-fable-5",
+// Claude has no entry: with no model set, Claude Code picks its own default.
+const DEFAULT_MODEL_BY_PROVIDER: Record<Exclude<Provider, "claude">, string> = {
   codex: "gpt-5.6-sol",
   cursor: "auto",
 };
@@ -24,39 +27,50 @@ export function useProviderInfo(canvasProvider?: Provider): ProviderInfoState {
 
   useEffect(() => {
     let cancelled = false;
-    void window.api.settings.read().then((s) => {
-      if (!cancelled) setSettings(s);
-    });
+    const read = (): void => {
+      void window.api.settings.read().then((s) => {
+        if (!cancelled) setSettings(s);
+      });
+    };
+    read();
+    // A Settings save (e.g. a new Claude model) must reach every badge without a remount.
+    const stopListening = onSettingsChanged(read);
     return () => {
       cancelled = true;
+      stopListening();
     };
   }, [canvasProvider]);
 
   const provider: Provider =
     canvasProvider ?? settings?.defaultProvider ?? "claude";
 
+  // Same resolution as chat:start: an empty Settings model means Claude Code's default,
+  // while an unset one falls back to the legacy claudeModel setting.
+  const claudeModelId =
+    (settings?.providers?.claude?.model ?? settings?.claudeModel) || undefined;
+
   const labelsByProvider = PROVIDERS.reduce<Record<Provider, string>>(
     (acc, p) => {
-      const configuredModel =
-        settings?.providers?.[p]?.model ??
-        (p === "claude" ? settings?.claudeModel : undefined);
-      const modelId = configuredModel ?? DEFAULT_MODEL_BY_PROVIDER[p];
+      const modelId =
+        p === "claude"
+          ? claudeModelId
+          : (settings?.providers?.[p]?.model ?? DEFAULT_MODEL_BY_PROVIDER[p]);
       acc[p] = prettyModelLabel(p, modelId);
       return acc;
     },
     {
-      claude: prettyModelLabel("claude", DEFAULT_MODEL_BY_PROVIDER.claude),
+      claude: prettyModelLabel("claude", undefined),
       codex: prettyModelLabel("codex", DEFAULT_MODEL_BY_PROVIDER.codex),
       cursor: prettyModelLabel("cursor", DEFAULT_MODEL_BY_PROVIDER.cursor),
     }
   );
 
-  return { provider, label: labelsByProvider[provider], labelsByProvider };
+  return { provider, label: labelsByProvider[provider], labelsByProvider, claudeModelId };
 }
 
 function prettyModelLabel(provider: Provider, modelId?: string): string {
   if (provider === "claude") {
-    return claudeModelLabel(modelId || DEFAULT_MODEL_BY_PROVIDER.claude);
+    return modelId ? claudeModelLabel(modelId) : "Default";
   }
   if (provider === "codex") {
     if (!modelId || modelId.length === 0) return "GPT-5.6 Sol";

@@ -1,21 +1,14 @@
 import { ChevronDown, Gauge } from "lucide-react";
 import clsx from "clsx";
-import {
-  CLAUDE_EFFORTS,
-  isClaudeEffort,
-  type ClaudeEffort,
-  type NodeId,
-} from "@shared/types";
+import { isClaudeEffort, type ClaudeEffort, type NodeId } from "@shared/types";
+import { effortsForClaudeModel } from "@shared/claudeModels";
 import { useCanvasStore } from "@/hooks/useCanvasStore";
+import { useClaudeModels } from "@/hooks/useClaudeModels";
+import { useProviderInfo } from "@/hooks/useProviderInfo";
 import { LABEL_BY_EFFORT, SHORT_LABEL_BY_EFFORT } from "@/lib/effortLabels";
 import { BadgePopover } from "./BadgePopover";
 
 type Props = { nodeId: NodeId; popoverSide?: "top" | "bottom" };
-
-const EFFORT_OPTIONS: readonly (ClaudeEffort | undefined)[] = [
-  undefined,
-  ...CLAUDE_EFFORTS,
-];
 
 function effortLabel(effort: ClaudeEffort | undefined, short: boolean): string {
   if (effort === undefined) return "default";
@@ -27,11 +20,19 @@ export function ClaudeEffortBadge({ nodeId, popoverSide }: Props) {
   const storedEffort = useCanvasStore(
     (s) => s.nodes[nodeId]?.data.nodeSettings?.reasoningEffort,
   );
+  const nodeModel = useCanvasStore((s) => s.nodes[nodeId]?.data.nodeSettings?.model);
   const setNodeSettings = useCanvasStore((s) => s.setNodeSettings);
+  const { claudeModelId } = useProviderInfo(provider);
+  const models = useClaudeModels();
 
-  if (provider !== "claude") return null;
+  // Only the levels the node's model accepts; none at all hides the badge (e.g. Haiku).
+  const supported = effortsForClaudeModel(models ?? [], nodeModel ?? claudeModelId);
+  if (provider !== "claude" || supported.length === 0) return null;
+  const effortOptions: readonly (ClaudeEffort | undefined)[] = [undefined, ...supported];
 
-  const effort = isClaudeEffort(storedEffort) ? storedEffort : undefined;
+  // A stored level this model can't take isn't sent (chat:start drops it), so show Default.
+  const effort =
+    isClaudeEffort(storedEffort) && supported.includes(storedEffort) ? storedEffort : undefined;
   const overridden = effort !== undefined;
 
   return (
@@ -71,7 +72,7 @@ export function ClaudeEffortBadge({ nodeId, popoverSide }: Props) {
             aria-label="Thinking effort"
             className="grid grid-cols-3 gap-1"
           >
-            {EFFORT_OPTIONS.map((next) => {
+            {effortOptions.map((next) => {
               const isActive = next === effort;
               return (
                 <button
