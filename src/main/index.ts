@@ -27,7 +27,8 @@ import {
   cancelAllForClient,
   completeRequest as completeAskUser,
 } from "./claude/askUserBridge";
-import { desktopClient } from "./api/client";
+import { createActiveChats } from "./api/activeChats";
+import { desktopClient, type Client } from "./api/client";
 import { bindRegistryToIpc, createApiRegistry } from "./api/registry";
 import { getShellPath } from "./shellPath";
 import { initAutoUpdate, checkForUpdatesNow } from "./autoUpdate";
@@ -98,9 +99,19 @@ function createWindow(hash?: string): BrowserWindow {
   return win;
 }
 
-type ActiveChat = { controller: AbortController; nodeId: string };
-const activeChats = new Map<string, ActiveChat>();
+const activeChats = createActiveChats();
+const watchedClients = new WeakSet<Client>();
 const api = createApiRegistry();
+
+function watchClient(client: Client): Client {
+  if (watchedClients.has(client)) return client;
+  watchedClients.add(client);
+  client.onGone(() => {
+    activeChats.abortForClient(client);
+    cancelAllForClient(client);
+  });
+  return client;
+}
 
 const CLAUDE_FABLE_POLICY_FALLBACK_MODEL = "claude-opus-4-8";
 
@@ -274,7 +285,7 @@ function registerIpc(): void {
     const chatOnly = Boolean(inlineChatOnly) || Boolean(nodeSettings?.chatOnly);
 
     const controller = new AbortController();
-    activeChats.set(chatId, { controller, nodeId });
+    activeChats.add(chatId, { controller, nodeId, client });
 
     send({ chatId, type: "start" });
     const startedAt = Date.now();
@@ -435,22 +446,17 @@ function registerIpc(): void {
       send({ chatId, type: "error", message, provider });
       send({ chatId, type: "done", isError: true, provider });
     } finally {
-      activeChats.delete(chatId);
+      activeChats.finish(chatId);
     }
   }, "shared");
 
   api.handle("chat:cancel", async (client, chatId: string) => {
-    activeChats.get(chatId)?.controller.abort();
-    activeChats.delete(chatId);
+    activeChats.abort(chatId);
     cancelAllForClient(client);
   }, "shared");
 
   api.handle("chat:cancelForNode", async (_client, nodeId: string) => {
-    for (const [chatId, entry] of activeChats) {
-      if (entry.nodeId !== nodeId) continue;
-      entry.controller.abort();
-      activeChats.delete(chatId);
-    }
+    activeChats.abortForNode(nodeId);
   }, "shared");
 
   api.handle("askUser:respond", async (_client, payload: AskUserResponsePayload) => {
@@ -582,7 +588,7 @@ app.whenReady().then(async () => {
   }
 
   registerIpc();
-  bindRegistryToIpc(api, ipcMain, (sender) => desktopClient(sender));
+  bindRegistryToIpc(api, ipcMain, (sender) => watchClient(desktopClient(sender)));
   createWindow();
   initAutoUpdate();
   installUpdateMenuItem();
