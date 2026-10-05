@@ -1,6 +1,7 @@
 // .mjs keeps the bun:test import out of `bun run typecheck`.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PAIRING_TOKEN_TTL_MS, deviceLabel, loadDeviceStore } from "./devices.ts";
@@ -69,6 +70,35 @@ describe("loadDeviceStore", () => {
     const file = fileFor("damaged");
     writeFileSync(file, "{not json");
     expect((await loadDeviceStore(file)).list()).toEqual([]);
+  });
+
+  test("a slow earlier write cannot resurrect a removed device", async () => {
+    const file = fileFor("serialize");
+    let releaseWrite;
+    const writePromise = new Promise((resolve) => {
+      releaseWrite = resolve;
+    });
+    let writeCount = 0;
+    const delayedWriter = async (path, contents) => {
+      writeCount++;
+      if (writeCount === 2) {
+        await writePromise;
+      }
+      return writeFile(path, contents);
+    };
+
+    const store = await loadDeviceStore(file, delayedWriter);
+    const { token } = store.createPairingToken(0);
+    const { deviceKey, device } = await store.redeemPairingToken(token, "x", 1_000);
+
+    store.touch(device.id, 70_000);
+    const removePromise = store.remove(device.id);
+
+    releaseWrite();
+    await removePromise;
+
+    const reloaded = await loadDeviceStore(file);
+    expect(reloaded.findByKey(deviceKey)).toBeUndefined();
   });
 });
 

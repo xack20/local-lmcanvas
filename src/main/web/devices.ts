@@ -56,10 +56,20 @@ async function readDevices(filePath: string): Promise<PairedDevice[]> {
   }
 }
 
-export async function loadDeviceStore(filePath: string): Promise<DeviceStore> {
+export async function loadDeviceStore(
+  filePath: string,
+  write: (path: string, contents: string) => Promise<void> = atomicWriteFile,
+): Promise<DeviceStore> {
   let devices = await readDevices(filePath);
   const tokens = new Map<string, number>();
-  const persist = (): Promise<void> => atomicWriteFile(filePath, JSON.stringify(devices, null, 2));
+  let writes: Promise<void> = Promise.resolve();
+
+  const writeCurrent = (): Promise<void> => write(filePath, JSON.stringify(devices, null, 2));
+  const persist = (): Promise<void> => {
+    const run = writes.then(writeCurrent, writeCurrent);
+    writes = run.catch(() => undefined);
+    return run;
+  };
 
   return {
     createPairingToken(now) {
