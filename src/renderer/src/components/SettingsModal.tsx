@@ -19,6 +19,8 @@ import {
   Toggle,
 } from "./settings";
 import { BrowserAccessSection } from "./settings/BrowserAccessSection";
+import { ClaudeModelSelect } from "./settings/ClaudeModelSelect";
+import { notifySettingsChanged } from "@/lib/settingsEvents";
 import { isBrowser } from "@/lib/webBridge";
 
 type View = "main" | "keybindings";
@@ -66,6 +68,7 @@ export function SettingsModal({ open, onClose }: Props) {
   const handleSave = async () => {
     setSaving(true);
     await window.api.settings.write(settings);
+    notifySettingsChanged();
     setSaving(false);
     onClose();
   };
@@ -271,8 +274,18 @@ export function SettingsModal({ open, onClose }: Props) {
                                 </div>
                                 <div>
                                   <label className="text-xs font-medium text-muted-foreground">
-                                    model id
+                                    {provider === "claude" ? "model" : "model id"}
                                   </label>
+                                  {provider === "claude" ? (
+                                    <ClaudeModelSelect
+                                      value={
+                                        settings.providers?.claude?.model ?? settings.claudeModel
+                                      }
+                                      onChange={(model) =>
+                                        updateProviderConfig("claude", { model })
+                                      }
+                                    />
+                                  ) : (
                                   <input
                                     value={settings.providers?.[provider]?.model ?? ""}
                                     onChange={(e) =>
@@ -292,6 +305,7 @@ export function SettingsModal({ open, onClose }: Props) {
                                       ? { list: "codex-models" }
                                       : {})}
                                   />
+                                  )}
                                   {provider === "codex" &&
                                     codexRuntime &&
                                     codexRuntime.models.length > 0 && (
