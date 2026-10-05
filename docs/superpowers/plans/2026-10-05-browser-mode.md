@@ -4,7 +4,7 @@
 
 **Goal:** Let the LMCanvas interface run in a web browser on another computer, reaching the Mac privately over Tailscale, while the desktop app stays the only place data lives and Claude runs.
 
-**Architecture:** The desktop app's main process gains a "second door": the existing 21 IPC handlers move into one shared call table that both Electron IPC and a new loopback-only HTTP + WebSocket server dispatch to. A `Client` abstraction (desktop window or browser tab) carries live events back to whoever started a chat. In the renderer, a web adapter installs a `window.api` with the identical `LmcApi` shape when there is no Electron preload. Tailscale Serve publishes the server at the Mac's `https://<host>.ts.net` address, and five layered checks guard every request.
+**Architecture:** The desktop app's main process gains a "second door": the existing 23 IPC handlers move into one shared call table that both Electron IPC and a new loopback-only HTTP + WebSocket server dispatch to. A `Client` abstraction (desktop window or browser tab) carries live events back to whoever started a chat. In the renderer, a web adapter installs a `window.api` with the identical `LmcApi` shape when there is no Electron preload. Tailscale Serve publishes the server at the Mac's `https://<host>.ts.net` address, and five layered checks guard every request.
 
 **Tech Stack:** Electron 33 / Node 20, TypeScript 5.6 strict, React 19 + Zustand, `ws` (only new dependency), Tailscale CLI, Bun 1.4 (`bun test`, `bun run typecheck`).
 
@@ -21,6 +21,7 @@
 - Request body limit: 25 MB (`25 * 1024 * 1024`). Pairing token: valid 10 minutes, single use. Device key: 32 random bytes. Cookie: `lmc_device`, `HttpOnly; Secure; SameSite=Strict; Path=/`.
 - Reconnect grace for running chats: 120 seconds. Browser reconnect backoff: 1 s doubling to a 10 s maximum.
 - Desktop-only channels: `dialog:pickFolder`, `shell:openPath`, `providers:openLogin`, `window:openCanvas`, and every `web:*` channel.
+- The call table fails closed: `api.handle` defaults to `"desktop-only"`; every browser-callable channel is registered with an explicit `"shared"` (ruling during Task 2).
 - Commit messages: `<type>: <description>` with a body; no attribution lines.
 - Work on branch `local/model-labels` in `~/projects/local-lmcanvas`.
 
@@ -568,7 +569,7 @@ Expected: PASS (6 tests).
 const api = createApiRegistry();
 ```
 
-2. Inside `registerIpc()`, change every `ipcMain.handle(` to `api.handle(`, and every first handler parameter `_e` to `_client`. This applies to all 21 channels: canvases:list/create/read/write/delete, settings:read/write, dialog:pickFolder, shell:openPath, processes:start/stop, files:list, slash:list, chat:start, chat:cancel, chat:cancelForNode, askUser:respond, providers:authStatus/openLogin/codexRuntime, window:openCanvas, groupSummary:generate and canvasName:generate. Handlers with no parameters (`async () => listCanvases()`) stay as they are.
+2. Inside `registerIpc()`, change every `ipcMain.handle(` to `api.handle(`, and every first handler parameter `_e` to `_client`. This applies to all 23 channels: canvases:list/create/read/write/delete, settings:read/write, dialog:pickFolder, shell:openPath, processes:start/stop, files:list, slash:list, chat:start, chat:cancel, chat:cancelForNode, askUser:respond, providers:authStatus/openLogin/codexRuntime, window:openCanvas, groupSummary:generate and canvasName:generate. Handlers with no parameters (`async () => listCanvases()`) stay as they are.
 
 3. Add the `"desktop-only"` scope as the third argument on these four registrations. Their bodies don't change. The call shape is:
 
@@ -2088,26 +2089,40 @@ In `src/main/index.ts`:
 3. Replace the `canvases:write` registration with:
 
 ```ts
-  api.handle("canvases:write", async (client, canvas: Canvas) => {
-    if (!canvasLocks.canWrite(canvas.id, client)) {
-      throw new Error("This chat is open on another device.");
-    }
-    return writeCanvas(canvas);
-  });
+  api.handle(
+    "canvases:write",
+    async (client, canvas: Canvas) => {
+      if (!canvasLocks.canWrite(canvas.id, client)) {
+        throw new Error("This chat is open on another device.");
+      }
+      return writeCanvas(canvas);
+    },
+    "shared",
+  );
 ```
 
 4. After it, register the lock channels:
 
 ```ts
-  api.handle("canvasLock:acquire", async (client, canvasId: string) =>
-    canvasLocks.acquire(canvasId, client),
+  api.handle(
+    "canvasLock:acquire",
+    async (client, canvasId: string) => canvasLocks.acquire(canvasId, client),
+    "shared",
   );
-  api.handle("canvasLock:takeOver", async (client, canvasId: string) => {
-    canvasLocks.takeOver(canvasId, client);
-  });
-  api.handle("canvasLock:release", async (client, canvasId: string) => {
-    canvasLocks.release(canvasId, client);
-  });
+  api.handle(
+    "canvasLock:takeOver",
+    async (client, canvasId: string) => {
+      canvasLocks.takeOver(canvasId, client);
+    },
+    "shared",
+  );
+  api.handle(
+    "canvasLock:release",
+    async (client, canvasId: string) => {
+      canvasLocks.release(canvasId, client);
+    },
+    "shared",
+  );
 ```
 
 - [ ] **Step 8: Hold the lock in the canvas store**
@@ -2333,10 +2348,14 @@ beforeAll(async () => {
   devices = await loadDeviceStore(join(root, "devices.json"));
   clients = createBrowserClientRegistry({ graceMs: 60_000 });
   const registry = createApiRegistry();
-  registry.handle("echo", async (client, ...args) => ({ kind: client.kind, args }));
-  registry.handle("boom", async () => {
-    throw new Error("nope");
-  });
+  registry.handle("echo", async (client, ...args) => ({ kind: client.kind, args }), "shared");
+  registry.handle(
+    "boom",
+    async () => {
+      throw new Error("nope");
+    },
+    "shared",
+  );
   registry.handle("web:createPairingLink", async () => ++ranSecret, "desktop-only");
 
   server = createWebServer({
