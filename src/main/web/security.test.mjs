@@ -39,6 +39,25 @@ describe("checkRequest", () => {
     expect(checkRequest(req, CTX)).toEqual(expected);
   });
 
+  test.each([
+    ["a PUT with no Origin", { ...post, method: "PUT", origin: undefined }, { ok: false, status: 403, reason: "bad-origin" }],
+    ["a DELETE with no Origin", { ...post, method: "DELETE", origin: undefined }, { ok: false, status: 403, reason: "bad-origin" }],
+    ["a WebSocket to the pairing path without a cookie", { ...post, method: "GET", path: "/pair", isUpgrade: true, deviceKey: undefined }, { ok: false, status: 401, reason: "not-paired" }],
+    ["a HEAD of the pairing path with no Origin", { ...ok, method: "HEAD", path: "/pair", deviceKey: undefined }, { ok: false, status: 403, reason: "bad-origin" }],
+    ["a same-origin HEAD of the pairing path without a cookie", { ...post, method: "HEAD", path: "/pair", deviceKey: undefined }, { ok: false, status: 401, reason: "not-paired" }],
+  ])("fails closed: %s", (_label, req, expected) => {
+    expect(checkRequest(req, CTX)).toEqual(expected);
+  });
+
+  test.each([
+    ["no expected host, request has none", { ...CTX, expectedHost: "" }, { ...ok, host: "" }, "bad-host"],
+    ["no expected host, request names one", { ...CTX, expectedHost: "" }, ok, "bad-host"],
+    ["no owner, request has none", { ...CTX, ownerLogin: "" }, { ...ok, tailscaleLogin: "" }, "not-owner"],
+    ["no owner, request names one", { ...CTX, ownerLogin: "" }, ok, "not-owner"],
+  ])("fails closed with an empty context: %s", (_label, ctx, req, reason) => {
+    expect(checkRequest(req, ctx)).toEqual({ ok: false, status: 403, reason });
+  });
+
   test("host comparison ignores case", () => {
     expect(checkRequest({ ...ok, host: "MY-MAC.tail1234.ts.net" }, CTX)).toEqual({ ok: true });
   });
