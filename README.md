@@ -23,10 +23,24 @@ Use LMCanvas from your other computers in a web browser while the desktop app is
 - **Thinking effort per node.** A gauge badge on each Claude node (and in the side-panel composer) picks Default or one of the levels the node's model supports, passed to Claude as `--effort`. For example, Opus 4.6 has no Extra High, and the badge is hidden for Haiku, which takes no effort level. Default passes nothing, so Claude Code's own default applies. An effort the model can't take is never sent.
   - New child nodes inherit their parent's settings, including model and effort.
   - Switching a node to a model that can't take its effort clears the effort.
+- **Context sizes on every node.**
+  - The root shows its own size.
+  - Every other node shows `+its own · root→here`, for example `+30k · 42k`.
+  - A bar along the bottom edge fills against the model's window, turning amber at 70% and red at 90%.
+  - Click the badge for the window, the auto-compact point, a breakdown, and how many compactions happened on the path.
+  - Sizes come from Claude Code itself at the end of each run. Older nodes show `~` estimates until their next run.
+- **Compaction you can see and control.**
+  - When Claude Code compacts, the node shows "Compacting conversation…" and leaves a divider such as `Context compacted: 940k → 62k (auto)`.
+  - **Compact this node** summarizes the node's own session in place.
+  - **Continue from summary** creates a Summary node from a compacted fork. The full branch stays available.
+  - Both are in the node's context badge (with an optional focus) and its right-click menu.
+- **Long branches never fail.**
+  - A branch replayed without a Claude session is fitted to the model's window: older messages are summarized, or left out if summarizing fails.
+  - A resumed session that still overflows is compacted and retried once.
 
 ### Canvas improvements
 
-- **Richer node toolbar.** Nodes and the side-panel composer show model, effort, folder, branch, FAST and PLAN badges. Long folder and branch names shrink to fit, and "on" states are clearly coloured.
+- **Richer node toolbar.** Nodes and the side-panel composer show model, effort, context, folder, branch, FAST and PLAN badges. Long folder and branch names shrink to fit, and "on" states are clearly coloured.
 - **Side panel on demand.** The node side panel no longer opens on every click. To open it, hover over or select a node you've sent a prompt from, then click the side-panel icon under it (tooltip "Open in side panel"). Deselecting closes the panel.
 - **Full-width nodes.** New nodes, and existing nodes you never resized, are 1100 px wide. Drag a node's right edge to narrow it, down to 450 px.
 - **Chats fit the window.** Opening a chat zooms so all nodes fit across the window, never above 100%. Short chats are centred; tall ones start at the top. Focusing a node caps the zoom so the node's full width fits the visible canvas.
@@ -271,6 +285,7 @@ In the desktop app, renderer → main calls go over IPC (`window.api.canvases.li
 ├── canvases/
 │   └── <id>.json        one file per canvas
 ├── settings.json        system prompt, claude binary path, model, browser-access on/off and keep-awake
+├── model-windows.json   context window per Claude model, as measured (sizes replays to fit)
 └── web-devices.json     paired browsers: name, dates, and a hash of each device key
 ```
 
