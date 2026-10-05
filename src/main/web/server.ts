@@ -32,8 +32,26 @@ const CONTENT_TYPES: Record<string, string> = {
   ".json": "application/json",
 };
 
-const page = (title: string, body: string): string =>
-  `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LMCanvas</title><body style="font-family:system-ui;padding:2rem;max-width:40rem"><h1>${title}</h1><p>${body}</p></body>`;
+// No page of ours is ever meant to be inside a frame.
+const FRAME_CSP = "frame-ancestors 'none'";
+// The pairing confirmation needs nothing but its own inline styles and form.
+const PAIR_PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+const PAIR_BODY_LIMIT_BYTES = 4096;
+
+const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c);
+
+const page = (title: string, body: string, extra = ""): string =>
+  `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LMCanvas</title><body style="font-family:system-ui;padding:2rem;max-width:40rem"><h1>${title}</h1><p>${body}</p>${extra}</body>`;
+
+// A GET only shows this page: link previews (Messages, Slack) fetch the URL and
+// must not use up the token. Pairing happens when the button POSTs it back.
+const confirmPairPage = (token: string): string =>
+  page(
+    "Pair this browser with LMCanvas?",
+    "This browser will be able to use LMCanvas on your Mac while browser access is on.",
+    `<form method="post" action="/pair"><input type="hidden" name="token" value="${escapeHtml(token)}"><button type="submit" style="font:inherit;padding:0.5rem 1rem;cursor:pointer">Pair this browser</button></form>`,
+  );
 
 const NOT_PAIRED_PAGE = page(
   "This device isn't paired yet",
@@ -96,6 +114,16 @@ function decodePath(value: string): string | null {
 
 function sendText(res: ServerResponse, status: number, body: string, type = "text/plain; charset=utf-8"): void {
   res.writeHead(status, { "Content-Type": type });
+  res.end(body);
+}
+
+function sendHtml(res: ServerResponse, status: number, body: string, headers: Record<string, string> = {}): void {
+  res.writeHead(status, {
+    "Content-Type": HTML,
+    "Content-Security-Policy": FRAME_CSP,
+    "X-Frame-Options": "DENY",
+    ...headers,
+  });
   res.end(body);
 }
 
@@ -202,11 +230,25 @@ export function createWebServer(deps: WebServerDeps): WebServer {
     return { ok: true, deviceId: device?.id ?? null };
   };
 
-  const pair = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
-    const token = url.searchParams.get("token") ?? "";
+  const showPairPage = (res: ServerResponse, url: URL): void =>
+    sendHtml(res, 200, confirmPairPage(url.searchParams.get("token") ?? ""), {
+      "Content-Security-Policy": PAIR_PAGE_CSP,
+      "Cache-Control": "no-store",
+      // Not "no-referrer": that makes the form's POST send `Origin: null`, which the gate refuses.
+      "Referrer-Policy": "same-origin",
+    });
+
+  const pair = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    let body: string;
+    try {
+      body = await readBody(req, PAIR_BODY_LIMIT_BYTES);
+    } catch {
+      return sendText(res, 400, "Bad request");
+    }
+    const token = new URLSearchParams(body).get("token") ?? "";
     const redeemed = await deps.devices.redeemPairingToken(token, deviceLabel(header(req, "user-agent")), now());
-    if (!redeemed) return sendText(res, 410, EXPIRED_PAIR_PAGE, HTML);
-    res.writeHead(302, {
+    if (!redeemed) return sendHtml(res, 410, EXPIRED_PAIR_PAGE);
+    res.writeHead(303, {
       Location: "/",
       "Set-Cookie": `${DEVICE_COOKIE}=${redeemed.deviceKey}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}`,
     });
@@ -269,9 +311,11 @@ export function createWebServer(deps: WebServerDeps): WebServer {
     try {
       const body = await readFile(filePath);
       const isIndex = filePath.endsWith("index.html");
+      const isHtml = extname(filePath) === ".html";
       res.writeHead(200, {
         "Content-Type": CONTENT_TYPES[extname(filePath)] ?? "application/octet-stream",
         "Cache-Control": isIndex ? "no-store" : "public, max-age=31536000, immutable",
+        ...(isHtml ? { "Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "DENY" } : {}),
       });
       res.end(body);
     } catch {
@@ -284,10 +328,11 @@ export function createWebServer(deps: WebServerDeps): WebServer {
     const auth = authorize(req, url.pathname, false);
     if (!auth.ok) {
       return auth.status === 401
-        ? sendText(res, 401, NOT_PAIRED_PAGE, HTML)
+        ? sendHtml(res, 401, NOT_PAIRED_PAGE)
         : sendText(res, auth.status, "Forbidden");
     }
-    if (req.method === "GET" && url.pathname === "/pair") return pair(req, res, url);
+    if (req.method === "GET" && url.pathname === "/pair") return showPairPage(res, url);
+    if (req.method === "POST" && url.pathname === "/pair") return pair(req, res);
     if (req.method === "GET" && url.pathname === "/api/fs/dirs") return listDirs(res, url);
     if (req.method === "POST" && url.pathname.startsWith("/api/")) return invoke(req, res, url, auth.deviceId);
     if (req.method === "GET") return serveStatic(res, url.pathname);

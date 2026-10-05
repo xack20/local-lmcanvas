@@ -29,7 +29,10 @@ export function checkRequest(req: GateRequest, ctx: GateContext): GateResult {
   if (changesState && req.origin !== `https://${ctx.expectedHost.toLowerCase()}`) {
     return { ok: false, status: 403, reason: "bad-origin" };
   }
-  if (req.method === "GET" && !req.isUpgrade && req.path === PAIR_PATH) return { ok: true };
+  // The pairing page and its confirmation are how a device without a cookie gets one.
+  // The confirming POST has already passed the Origin check above.
+  const pairs = !req.isUpgrade && (req.method === "GET" || req.method === "POST") && req.path === PAIR_PATH;
+  if (pairs) return { ok: true };
   if (!req.deviceKey || !ctx.isPairedDevice(req.deviceKey)) {
     return { ok: false, status: 401, reason: "not-paired" };
   }

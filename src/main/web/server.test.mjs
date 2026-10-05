@@ -38,6 +38,15 @@ function call({ method = "GET", path, headers = {}, body, targetPort = port }) {
 }
 
 const trusted = (extra = {}) => ({ Host: HOST, "Tailscale-User-Login": OWNER, ...extra });
+// Redeems a pairing token the way the confirm page's form does.
+const redeem = (token, { targetPort = port, headers = {} } = {}) =>
+  call({
+    method: "POST",
+    path: "/pair",
+    headers: trusted({ Origin: ORIGIN, "Content-Type": "application/x-www-form-urlencoded", ...headers }),
+    body: `token=${encodeURIComponent(token)}`,
+    targetPort,
+  });
 const paired = (extra = {}) => trusted({ Cookie: cookie, ...extra });
 const apiCall = (channel, args, extra = {}) =>
   call({
@@ -100,7 +109,7 @@ async function startIsolatedServer({ clients: isolatedClients, write, now, timer
   });
   await isolated.listen(0);
   const { token } = store.createPairingToken(Date.now());
-  const pairing = await call({ path: `/pair?token=${token}`, headers: trusted(), targetPort: isolated.port() });
+  const pairing = await redeem(token, { targetPort: isolated.port() });
   return {
     port: isolated.port(),
     cookie: pairing.headers["set-cookie"][0].split(";")[0],
@@ -148,8 +157,8 @@ beforeAll(async () => {
   port = server.port();
 
   const { token } = devices.createPairingToken(Date.now());
-  const paired = await call({ path: `/pair?token=${token}`, headers: trusted({ "User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/128.0" }) });
-  expect(paired.status).toBe(302);
+  const paired = await redeem(token, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/128.0" } });
+  expect(paired.status).toBe(303);
   cookie = paired.headers["set-cookie"][0].split(";")[0];
 });
 
@@ -170,11 +179,67 @@ describe("web server gate", () => {
     expect(res.text).toContain("isn't paired");
   });
 
-  test("a pairing link works once", async () => {
+  test("opening a pairing link only asks for confirmation, so link previews don't use it up", async () => {
     const { token } = devices.createPairingToken(Date.now());
-    const first = await call({ path: `/pair?token=${token}`, headers: trusted() });
+    for (let i = 0; i < 2; i++) {
+      const page = await call({ path: `/pair?token=${token}`, headers: trusted() });
+      expect(page.status).toBe(200);
+      expect(page.headers["set-cookie"]).toBeUndefined();
+      expect(page.text).toContain("Pair this browser");
+      expect(page.text).toContain('<form method="post" action="/pair">');
+      expect(page.text).toContain(`name="token" value="${token}"`);
+    }
+    expect((await redeem(token)).status).toBe(303);
+  });
+
+  test("confirming redeems the link once, then it's gone", async () => {
+    const { token } = devices.createPairingToken(Date.now());
+    const first = await redeem(token);
+    expect(first.status).toBe(303);
+    expect(first.headers.location).toBe("/");
     expect(first.headers["set-cookie"][0]).toContain("HttpOnly; Secure; SameSite=Strict; Path=/");
-    expect((await call({ path: `/pair?token=${token}`, headers: trusted() })).status).toBe(410);
+    const second = await redeem(token);
+    expect(second.status).toBe(410);
+    expect(second.text).toContain("expired or was already used");
+  });
+
+  test("a confirmation from another site, or with no Origin, is refused and leaves the link usable", async () => {
+    const { token } = devices.createPairingToken(Date.now());
+    expect((await redeem(token, { headers: { Origin: "https://evil.example" } })).status).toBe(403);
+    const noOrigin = await call({
+      method: "POST",
+      path: "/pair",
+      headers: trusted({ "Content-Type": "application/x-www-form-urlencoded" }),
+      body: `token=${token}`,
+    });
+    expect(noOrigin.status).toBe(403);
+    expect((await redeem(token)).status).toBe(303);
+  });
+
+  test("the confirm page escapes the token and allows nothing but its own form", async () => {
+    const page = await call({ path: `/pair?token=${encodeURIComponent('"><script>alert(1)</script>')}`, headers: trusted() });
+    expect(page.text).not.toContain("<script>");
+    expect(page.text).toContain("&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;");
+    const csp = page.headers["content-security-policy"];
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("form-action 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(page.headers["x-frame-options"]).toBe("DENY");
+    expect(page.headers["referrer-policy"]).toBe("same-origin");
+  });
+});
+
+describe("framing", () => {
+  test("the app and the pairing pages refuse to be framed", async () => {
+    for (const res of [
+      await call({ path: "/", headers: paired() }),
+      await call({ path: "/", headers: trusted() }),
+      await redeem("not-a-token"),
+    ]) {
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(res.headers["x-frame-options"]).toBe("DENY");
+      expect(res.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    }
   });
 });
 

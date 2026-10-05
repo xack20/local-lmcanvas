@@ -34,7 +34,9 @@ describe("checkRequest", () => {
     ["a POST from another site", { ...post, origin: "https://evil.example" }, { ok: false, status: 403, reason: "bad-origin" }],
     ["a POST with no Origin", { ...post, origin: undefined }, { ok: false, status: 403, reason: "bad-origin" }],
     ["a WebSocket from another site", { ...ok, path: "/ws", isUpgrade: true, origin: "https://evil.example" }, { ok: false, status: 403, reason: "bad-origin" }],
-    ["a POST to the pairing path", { ...post, path: "/pair", deviceKey: undefined }, { ok: false, status: 401, reason: "not-paired" }],
+    ["a same-origin POST to the pairing path without a cookie", { ...post, path: "/pair", deviceKey: undefined }, { ok: true }],
+    ["a POST to the pairing path with no Origin", { ...post, path: "/pair", origin: undefined, deviceKey: undefined }, { ok: false, status: 403, reason: "bad-origin" }],
+    ["a POST to the pairing path from another site", { ...post, path: "/pair", origin: "https://evil.example", deviceKey: undefined }, { ok: false, status: 403, reason: "bad-origin" }],
   ])("%s", (_label, req, expected) => {
     expect(checkRequest(req, CTX)).toEqual(expected);
   });
