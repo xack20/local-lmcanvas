@@ -38,6 +38,7 @@ import {
   type GeneratedNodeSummary,
 } from "@/lib/groupSummary";
 import { useGroupSummaries } from "@/hooks/useGroupSummaries";
+import { useWidthFitOnOpen } from "@/hooks/useWidthFitOnOpen";
 import type { ChatData } from "@shared/types";
 
 const nodeTypes = { custom: CustomNode };
@@ -48,7 +49,6 @@ const defaultEdgeOptions = {
 };
 
 const defaultViewport = { x: 200, y: 200, zoom: 1 };
-const fitViewOptions = { padding: 0.25, maxZoom: 1 };
 const proOptions = { hideAttribution: true };
 
 const edgeStyle = {
@@ -58,6 +58,7 @@ const edgeStyle = {
 };
 
 function CanvasInner() {
+  useWidthFitOnOpen();
   const nodesById = useCanvasStore((s) => s.nodes);
   const edgesState = useCanvasStore((s) => s.edges);
   const canvasId = useCanvasStore((s) => s.canvasId);
@@ -296,8 +297,6 @@ function CanvasInner() {
     [connectEdge]
   );
 
-  const nodeCount = rfNodes.length;
-
   // Pull each node's latest user prompt as the candidate input for group
   // titling. The hook handles LLM-backed generation (debounced, with the
   // heuristic clusterer as immediate placeholder and graceful fallback).
@@ -348,8 +347,6 @@ function CanvasInner() {
         onPaneContextMenu={handlePaneContextMenu}
         onNodeContextMenu={handleNodeContextMenu}
         defaultViewport={defaultViewport}
-        fitView={nodeCount > 0}
-        fitViewOptions={fitViewOptions}
         selectionOnDrag
         selectionMode={SelectionMode.Partial}
         selectNodesOnDrag

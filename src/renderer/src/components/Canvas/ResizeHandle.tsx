@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useReactFlow } from "@xyflow/react";
 import clsx from "clsx";
 import { useCanvasStore } from "@/hooks/useCanvasStore";
-import { NODE_MAX_WIDTH, NODE_WIDTH } from "@/lib/canvasConstants";
+import { NODE_MAX_WIDTH, NODE_MIN_WIDTH } from "@/lib/canvasConstants";
 import type { NodeId } from "@shared/types";
 
 interface ResizeHandleProps {
@@ -34,7 +34,7 @@ export function ResizeHandle({ nodeId, width, isVisible }: ResizeHandleProps) {
       if (!start) return;
       const deltaScreen = e.clientX - start.x;
       const deltaFlow = deltaScreen / (start.zoom || 1);
-      const next = Math.max(NODE_WIDTH, Math.min(NODE_MAX_WIDTH, start.w + deltaFlow));
+      const next = Math.max(NODE_MIN_WIDTH, Math.min(NODE_MAX_WIDTH, start.w + deltaFlow));
       patchNode(nodeId, { width: next });
     };
     const onUp = () => {

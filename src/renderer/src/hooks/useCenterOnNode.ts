@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useReactFlow, useStoreApi } from "@xyflow/react";
 import { FOCUS_DURATION_MS, FOCUS_ZOOM } from "@/lib/canvasConstants";
+import { fitZoom } from "@/lib/fitZoom";
 
 function getVisibleCenterX(flowElement: HTMLElement, width: number): number {
   const panel = document.querySelector<HTMLElement>("[data-node-panel]");
@@ -56,11 +57,12 @@ export function useCenterOnNode(): (
       const cw = flowWidth || domNode?.clientWidth || window.innerWidth;
       const ch = flowHeight || domNode?.clientHeight || window.innerHeight;
       const visibleCenterX = domNode ? getVisibleCenterX(domNode, cw) : cw / 2;
+      const fittedZoom = fitZoom(zoom, width, visibleCenterX * 2);
       const centerX = x + width / 2;
       const centerY = y + height / 2;
-      const vx = visibleCenterX - centerX * zoom;
-      const vy = ch / 2 - centerY * zoom;
-      void setViewport({ x: vx, y: vy, zoom }, { duration });
+      const vx = visibleCenterX - centerX * fittedZoom;
+      const vy = ch / 2 - centerY * fittedZoom;
+      void setViewport({ x: vx, y: vy, zoom: fittedZoom }, { duration });
     },
     [flowStore, setViewport],
   );

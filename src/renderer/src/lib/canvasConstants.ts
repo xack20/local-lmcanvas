@@ -2,8 +2,10 @@
 // collision resolver, camera centering, branch buttons, and context-menu
 // child placement all agree on geometry.
 
-export const NODE_WIDTH = 450;
+export const NODE_MIN_WIDTH = 450;
 export const NODE_MAX_WIDTH = 1100;
+// Nodes open at full width; the resize handle can narrow them to NODE_MIN_WIDTH.
+export const NODE_WIDTH = NODE_MAX_WIDTH;
 export const NODE_MIN_HEIGHT = 96;
 
 // Avera-style padding multiplier: the right-lane child sits NODE_WIDTH +

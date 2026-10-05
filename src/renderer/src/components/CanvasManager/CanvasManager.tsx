@@ -98,12 +98,15 @@ export function CanvasManager({
     }
   };
 
+  // Picking a chat closes the sidebar so the chat opens at full width.
   const handleSelect = (canvas: CanvasSummary) => {
     searchRef.current?.close();
+    setIsOpen(false);
     navigateToCanvas(canvas.id);
   };
 
   const handleThreadSelect = (canvasId: string, startNodeId: string) => {
+    setIsOpen(false);
     if (canvasId !== currentCanvasId) {
       navigateToCanvas(canvasId);
     }

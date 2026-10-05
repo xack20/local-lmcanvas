@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { CanvasNode } from "@shared/types";
 import { useCanvasStore } from "@/hooks/useCanvasStore";
 import { useCenterOnNode } from "@/hooks/useCenterOnNode";
+import { NODE_WIDTH } from "@/lib/canvasConstants";
 import { useIsActivePane } from "@/hooks/useActivePane";
 import { useSearchModal } from "@/providers/SearchModalProvider";
 import { SearchModal } from "./SearchModal";
@@ -26,7 +27,7 @@ export function SearchModalWrapper() {
 
   const handleNodeSelect = useCallback(
     (node: CanvasNode) => {
-      const width = (node.data as { width?: number }).width ?? 450;
+      const width = (node.data as { width?: number }).width ?? NODE_WIDTH;
       const height = (node.data as { height?: number }).height ?? 200;
       centerOnNode(node.position.x, node.position.y, width, height);
     },
