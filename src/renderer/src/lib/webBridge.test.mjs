@@ -592,6 +592,18 @@ describe("createWebApi connection watchdog", () => {
     expect(h.scheduled).toHaveLength(1);
   });
 
+  test("a socket given up on that opens late cannot disturb the new connection's watchdog", () => {
+    const h = harness();
+    const stalled = h.sockets[0];
+    h.timers.advance(WATCHDOG_MS);
+    h.server.reconnect();
+    h.server.welcome(true);
+    stalled.onopen?.();
+    h.timers.advance(WATCHDOG_MS);
+    expect(h.sockets[1].closed).toBe(true);
+    expect(h.scheduled).toHaveLength(2);
+  });
+
   test("a closed connection leaves no watchdog running", () => {
     const h = harness();
     h.server.welcome(true);

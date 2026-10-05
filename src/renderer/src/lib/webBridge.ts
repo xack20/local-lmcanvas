@@ -297,6 +297,7 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
     // A dead connection can take minutes to report its close, so stop listening
     // to it and reconnect now.
     const giveUp = (): void => {
+      socket.onopen = null;
       socket.onmessage = null;
       socket.onclose = null;
       try {
