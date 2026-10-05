@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { useCanvasStoreApi } from "./useCanvasStore";
 import type {
   CanvasNode,
+  CompactionBlock,
   ImageBlock,
   NodeId,
   Provider,
@@ -192,6 +193,7 @@ export function useNodeChat(nodeId: NodeId) {
         }
         setStreaming(false);
         activeChatIdRef.current = null;
+        storeApi.getState().setCompacting(nodeId, false);
         storeApi.getState().chatSettled(chatId);
         void storeApi.getState().save();
       };
@@ -250,6 +252,27 @@ export function useNodeChat(nodeId: NodeId) {
           case "session":
             s.setProviderSession(nodeId, ev.session);
             return;
+          case "compacting":
+            s.setCompacting(nodeId, ev.active);
+            return;
+          case "compacted": {
+            nextStepsStreamer.flush();
+            flushText();
+            flushThinking();
+            const block: CompactionBlock = {
+              type: "compaction",
+              trigger: ev.trigger,
+              before: ev.before,
+              after: ev.after,
+              ...(ev.method ? { method: ev.method } : {}),
+            };
+            s.appendBlock(nodeId, asstMsgId, block);
+            s.setCompacting(nodeId, false);
+            return;
+          }
+          case "context":
+            s.setNodeContext(nodeId, ev.context);
+            return;
           case "done":
             if (ev.usage) {
               s.setMessageUsage(nodeId, asstMsgId, ev.usage);
@@ -303,6 +326,8 @@ export function useNodeChat(nodeId: NodeId) {
 
       const nodeSettings = storeApi.getState().nodes[nodeId]?.data.nodeSettings;
 
+      // A stale exact size would outlive a failed measurement; without one the badge estimates.
+      storeApi.getState().setNodeContext(nodeId, undefined);
       try {
         await window.api.chat.start({
           chatId,

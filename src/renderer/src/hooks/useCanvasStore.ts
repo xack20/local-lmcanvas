@@ -8,6 +8,7 @@ import type {
   CanvasEdge,
   CanvasNode,
   ContentBlock,
+  ContextSnapshot,
   AppSettings,
   ErrorCode,
   Message,
@@ -63,6 +64,8 @@ export type CanvasStoreState = {
   runningChats: ReadonlySet<string>;
   /** The pane unmounted while a reply was running: release the lock after the last chat's final save. */
   releaseWhenIdle: boolean;
+  /** Nodes Claude Code is compacting right now (not saved). */
+  compactingNodeIds: Record<NodeId, true>;
   pendingPrefills: Record<NodeId, PendingPrefill>;
   searchHighlights: Map<NodeId, Set<string>>;
   setSearchHighlights: (nodeId: NodeId, textMatches: string[]) => void;
@@ -125,6 +128,8 @@ export type CanvasStoreState = {
     fallback: ModelFallback,
   ) => void;
   setProviderSession: (nodeId: NodeId, session: ProviderSessionRef) => void;
+  setNodeContext: (nodeId: NodeId, context: ContextSnapshot | undefined) => void;
+  setCompacting: (nodeId: NodeId, active: boolean) => void;
   finalizeMessage: (nodeId: NodeId, messageId: string) => void;
   errorMessage: (
     nodeId: NodeId,
@@ -303,6 +308,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       lockReplyRunning: false,
       runningChats: new Set(),
       releaseWhenIdle: false,
+      compactingNodeIds: {},
       pendingPrefills: {},
       searchHighlights: new Map(),
       merging: false,
@@ -458,6 +464,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           lockHolder: lock.ok ? null : lock.holderKind,
           lockReplyRunning: lock.ok ? false : lock.replyRunning === true,
           dirty: { count: 0, lastChangeAt: 0 },
+          compactingNodeIds: {},
         });
         if (!lock.ok) get().setSelectedNodeIds([]);
         const prompt = isUnnamedCanvasName(canvas.name)
@@ -882,6 +889,25 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           return nodes ? { nodes } : s;
         });
         get().markDirty();
+      },
+
+      setNodeContext: (nodeId, context) => {
+        set((s) => {
+          const node = s.nodes[nodeId];
+          if (!node) return s;
+          const { context: _previous, ...rest } = node.data;
+          const data = context ? { ...rest, context } : rest;
+          return { nodes: { ...s.nodes, [nodeId]: { ...node, data } } };
+        });
+        get().markDirty();
+      },
+
+      setCompacting: (nodeId, active) => {
+        set((s) => {
+          if (active) return { compactingNodeIds: { ...s.compactingNodeIds, [nodeId]: true as const } };
+          const { [nodeId]: _done, ...rest } = s.compactingNodeIds;
+          return { compactingNodeIds: rest };
+        });
       },
 
       setProviderSession: (nodeId, session) => {
