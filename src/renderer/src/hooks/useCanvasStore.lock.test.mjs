@@ -84,6 +84,14 @@ describe("canvas store lock", () => {
     expect(writes).toEqual([]);
   });
 
+  test("a conflict remembers whether a reply is running at the holder, until the lock is lost", async () => {
+    stubApi({ ok: false, holderKind: "desktop", replyRunning: true });
+    await store.getState().loadCanvas(CANVAS_ID);
+    expect(store.getState().lockReplyRunning).toBe(true);
+    store.getState().markLockLost(CANVAS_ID);
+    expect(store.getState().lockReplyRunning).toBe(false);
+  });
+
   test("a held canvas still saves", async () => {
     const { writes } = stubApi({ ok: true });
     await store.getState().loadCanvas(CANVAS_ID);

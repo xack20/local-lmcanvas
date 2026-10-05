@@ -53,6 +53,8 @@ export type CanvasStoreState = {
   error: string | null;
   lock: CanvasLockState;
   lockHolder: LockHolderKind;
+  /** On a conflict: the holder has a reply running here, which taking over would stop. */
+  lockReplyRunning: boolean;
   /** Chats started from this store that haven't ended yet. */
   runningChats: ReadonlySet<string>;
   /** The pane unmounted while a reply was running: release the lock after the last chat's final save. */
@@ -275,6 +277,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       error: null,
       lock: null,
       lockHolder: null,
+      lockReplyRunning: false,
       runningChats: new Set(),
       releaseWhenIdle: false,
       pendingPrefills: {},
@@ -418,6 +421,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           loaded: true,
           lock: lock.ok ? "held" : "conflict",
           lockHolder: lock.ok ? null : lock.holderKind,
+          lockReplyRunning: lock.ok ? false : lock.replyRunning === true,
           dirty: { count: 0, lastChangeAt: 0 },
         });
         if (!lock.ok) get().setSelectedNodeIds([]);
@@ -957,7 +961,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
 
       markLockLost: (canvasId) => {
         if (get().canvasId !== canvasId) return;
-        set({ lock: "lost", lockHolder: null });
+        set({ lock: "lost", lockHolder: null, lockReplyRunning: false });
         get().setSelectedNodeIds([]);
       },
 

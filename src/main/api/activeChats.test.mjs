@@ -5,8 +5,8 @@ import { createActiveChats } from "./activeChats.ts";
 const clientA = { id: "a", kind: "browser" };
 const clientB = { id: "b", kind: "desktop" };
 
-function chat(nodeId, client) {
-  return { controller: new AbortController(), nodeId, client };
+function chat(nodeId, client, canvasId = "canvas1") {
+  return { controller: new AbortController(), nodeId, canvasId, client };
 }
 
 describe("createActiveChats", () => {
@@ -45,5 +45,32 @@ describe("createActiveChats", () => {
     expect(done.controller.signal.aborted).toBe(false);
     expect(stopped.controller.signal.aborted).toBe(true);
     expect(chats.has("done") || chats.has("stopped")).toBe(false);
+  });
+});
+
+describe("createActiveChats per canvas", () => {
+  test("abortForClientOnCanvas stops only that client's chats on that canvas", () => {
+    const chats = createActiveChats();
+    const target = chat("n1", clientA, "canvas1");
+    const otherCanvas = chat("n2", clientA, "canvas2");
+    const otherClient = chat("n3", clientB, "canvas1");
+    chats.add("c1", target);
+    chats.add("c2", otherCanvas);
+    chats.add("c3", otherClient);
+    chats.abortForClientOnCanvas(clientA, "canvas1");
+    expect(target.controller.signal.aborted).toBe(true);
+    expect(otherCanvas.controller.signal.aborted).toBe(false);
+    expect(otherClient.controller.signal.aborted).toBe(false);
+    expect([chats.has("c1"), chats.has("c2"), chats.has("c3")]).toEqual([false, true, true]);
+  });
+
+  test("hasForClientOnCanvas reports a running chat for that client and canvas only", () => {
+    const chats = createActiveChats();
+    chats.add("c1", chat("n1", clientA, "canvas1"));
+    expect(chats.hasForClientOnCanvas(clientA, "canvas1")).toBe(true);
+    expect(chats.hasForClientOnCanvas(clientA, "canvas2")).toBe(false);
+    expect(chats.hasForClientOnCanvas(clientB, "canvas1")).toBe(false);
+    chats.finish("c1");
+    expect(chats.hasForClientOnCanvas(clientA, "canvas1")).toBe(false);
   });
 });

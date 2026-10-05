@@ -3,11 +3,12 @@ import { lockOverlayText, type CanvasLockState, type LockHolderKind } from "@/li
 type Props = {
   state: CanvasLockState;
   holderKind: LockHolderKind;
+  replyRunning: boolean;
   onTakeOver: () => void;
 };
 
-export function LockOverlay({ state, holderKind, onTakeOver }: Props) {
-  const text = lockOverlayText(state, holderKind);
+export function LockOverlay({ state, holderKind, replyRunning, onTakeOver }: Props) {
+  const text = lockOverlayText(state, holderKind, replyRunning);
   if (!text) return null;
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/60">

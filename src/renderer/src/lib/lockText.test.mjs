@@ -16,3 +16,14 @@ describe("lockOverlayText", () => {
     expect(lockOverlayText(null, null)).toBeNull();
   });
 });
+
+describe("lockOverlayText with a running reply", () => {
+  test("warns that taking over stops the reply", () => {
+    const text = lockOverlayText("conflict", "desktop", true);
+    expect(text.title).toBe("This chat is open in the desktop app.");
+    expect(text.detail).toBe("A reply is still running there. Taking over stops it.");
+  });
+  test("says nothing about replies when none is running", () => {
+    expect(lockOverlayText("conflict", "browser", false).detail).toBe("Only one place can edit a chat at a time.");
+  });
+});

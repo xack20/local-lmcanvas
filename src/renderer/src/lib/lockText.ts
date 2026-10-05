@@ -4,6 +4,7 @@ export type LockHolderKind = "desktop" | "browser" | null;
 export function lockOverlayText(
   state: CanvasLockState,
   holder: LockHolderKind,
+  replyRunning = false,
 ): { title: string; detail: string } | null {
   if (state === "conflict") {
     return {
@@ -11,7 +12,9 @@ export function lockOverlayText(
         holder === "desktop"
           ? "This chat is open in the desktop app."
           : "This chat is open in another browser tab or device.",
-      detail: "Only one place can edit a chat at a time.",
+      detail: replyRunning
+        ? "A reply is still running there. Taking over stops it."
+        : "Only one place can edit a chat at a time.",
     };
   }
   if (state === "lost") {

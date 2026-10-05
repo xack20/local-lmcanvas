@@ -75,6 +75,7 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
   const saving = useCanvasStore((s) => s.saving);
   const lock = useCanvasStore((s) => s.lock);
   const lockHolder = useCanvasStore((s) => s.lockHolder);
+  const lockReplyRunning = useCanvasStore((s) => s.lockReplyRunning);
   const takeOverLock = useCanvasStore((s) => s.takeOverLock);
   const markLockLost = useCanvasStore((s) => s.markLockLost);
   const releaseLock = useCanvasStore((s) => s.releaseLock);
@@ -183,7 +184,12 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
 
       <DeleteNodeModal />
       <BranchRequestListener paneId={id} />
-      <LockOverlay state={lock} holderKind={lockHolder} onTakeOver={() => void takeOverLock()} />
+      <LockOverlay
+        state={lock}
+        holderKind={lockHolder}
+        replyRunning={lockReplyRunning}
+        onTakeOver={() => void takeOverLock()}
+      />
     </div>
   );
 }

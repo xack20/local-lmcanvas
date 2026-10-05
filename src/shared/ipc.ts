@@ -186,7 +186,10 @@ export type ProviderAuthStatus = {
   detail?: string;
 };
 
-export type CanvasLockResult = { ok: true } | { ok: false; holderKind: "desktop" | "browser" };
+export type CanvasLockResult =
+  | { ok: true }
+  /** `replyRunning`: the holder has a reply running on this canvas, which taking over stops. */
+  | { ok: false; holderKind: "desktop" | "browser"; replyRunning: boolean };
 export type CanvasLockLostEvent = { canvasId: string };
 
 export type PairedDeviceSummary = { id: string; label: string; createdAt: number; lastSeenAt: number };

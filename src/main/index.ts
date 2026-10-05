@@ -107,7 +107,10 @@ function createWindow(hash?: string): BrowserWindow {
 }
 
 const activeChats = createActiveChats();
-const canvasLocks = createCanvasLocks();
+const canvasLocks = createCanvasLocks({
+  isReplyRunning: (holder, canvasId) => activeChats.hasForClientOnCanvas(holder, canvasId),
+  stopReplies: (holder, canvasId) => activeChats.abortForClientOnCanvas(holder, canvasId),
+});
 const watchedClients = new WeakSet<Client>();
 const api = createApiRegistry();
 
@@ -377,7 +380,7 @@ function registerIpc(): void {
     const chatOnly = Boolean(inlineChatOnly) || Boolean(nodeSettings?.chatOnly);
 
     const controller = new AbortController();
-    activeChats.add(chatId, { controller, nodeId, client });
+    activeChats.add(chatId, { controller, nodeId, canvasId, client });
 
     send({ chatId, type: "start" });
     const startedAt = Date.now();
