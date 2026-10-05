@@ -14,7 +14,7 @@ import type {
   BetaContentBlock,
   BetaTextBlock,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.mjs";
-import { CLAUDE_BIN_PATH } from "../claude/runner";
+import { claudeExecutable } from "../claude/runner";
 
 export const GROUP_SUMMARY_PROMPT_VERSION = "lmc-group-summary-v1";
 const MAX_CANDIDATES = 80;
@@ -35,6 +35,7 @@ export type GenerateGroupSummaryArgs = {
   candidates: GroupSummaryCandidate[];
   existingGroupTitles?: string[];
   model?: string;
+  binPath?: string;
   signal?: AbortSignal;
 };
 
@@ -292,7 +293,7 @@ export async function generateGroupSummaries(
       options: {
         cwd: homedir(),
         model: args.model,
-        pathToClaudeCodeExecutable: CLAUDE_BIN_PATH,
+        pathToClaudeCodeExecutable: claudeExecutable(args.binPath),
         systemPrompt: SYSTEM_PROMPT,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,

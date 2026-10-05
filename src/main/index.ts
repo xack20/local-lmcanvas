@@ -479,11 +479,13 @@ function registerIpc(): void {
       const settings = await readSettings();
       const model =
         settings.providers?.claude?.model ?? settings.claudeModel ?? undefined;
+      const binPath = settings.providers?.claude?.binPath ?? settings.claudeBinPath;
       try {
         return await generateGroupSummaries({
           candidates: args.candidates,
           existingGroupTitles: args.existingGroupTitles,
           model,
+          binPath,
         });
       } catch (err) {
         console.error("[groupSummary:generate] failed:", err);
@@ -498,8 +500,9 @@ function registerIpc(): void {
       const settings = await readSettings();
       const model =
         settings.providers?.claude?.model ?? settings.claudeModel ?? undefined;
+      const binPath = settings.providers?.claude?.binPath ?? settings.claudeBinPath;
       try {
-        return await generateCanvasName({ prompt: args.prompt, model });
+        return await generateCanvasName({ prompt: args.prompt, model, binPath });
       } catch (err) {
         console.error("[canvasName:generate] failed:", err);
         return null;

@@ -97,8 +97,12 @@ export async function runCodex(prompt: string, opts: RunAgentOpts): Promise<void
     });
     const modelId = opts.model ?? runtimeInfo.defaultModelId;
     const modelInfo = runtimeInfo.models.find((model) => model.id === modelId);
-    const reasoningEffort =
-      opts.reasoningEffort ?? modelInfo?.defaultReasoningEffort;
+    const requestedEffort =
+      opts.reasoningEffort &&
+      (!modelInfo || modelInfo.supportedReasoningEfforts.includes(opts.reasoningEffort))
+        ? opts.reasoningEffort
+        : undefined;
+    const reasoningEffort = requestedEffort ?? modelInfo?.defaultReasoningEffort;
     const resolvedServiceTier = serviceTier(opts.serviceTier, modelInfo);
     console.info("[codex:latency]", {
       nodeId: opts.nodeId,

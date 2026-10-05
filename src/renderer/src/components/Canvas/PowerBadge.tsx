@@ -9,29 +9,12 @@ import type {
 } from "@shared/types";
 import { REASONING_EFFORTS } from "@shared/types";
 import { useCanvasStore } from "@/hooks/useCanvasStore";
+import { LABEL_BY_EFFORT, SHORT_LABEL_BY_EFFORT } from "@/lib/effortLabels";
 import { BadgePopover } from "./BadgePopover";
 
 type Props = { nodeId: NodeId; popoverSide?: "top" | "bottom" };
 
 const FALLBACK_CODEX_REASONING_EFFORT: ReasoningEffort = "low";
-
-const LABEL_BY_EFFORT: Record<ReasoningEffort, string> = {
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "extra high",
-  max: "max",
-  ultra: "ultra",
-};
-
-const SHORT_LABEL_BY_EFFORT: Record<ReasoningEffort, string> = {
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "x-high",
-  max: "max",
-  ultra: "ultra",
-};
 
 export function PowerBadge({ nodeId, popoverSide }: Props) {
   const provider = useCanvasStore((s) => s.getEffectiveProvider(nodeId));

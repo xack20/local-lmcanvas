@@ -127,6 +127,20 @@ export const REASONING_EFFORTS: readonly ReasoningEffort[] = [
   "ultra",
 ] as const;
 
+export type ClaudeEffort = Exclude<ReasoningEffort, "ultra">;
+
+export const CLAUDE_EFFORTS: readonly ClaudeEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export function isClaudeEffort(value: unknown): value is ClaudeEffort {
+  return CLAUDE_EFFORTS.some((effort) => effort === value);
+}
+
 export type NodeSettings = {
   provider?: Provider;
   cwd?: string;

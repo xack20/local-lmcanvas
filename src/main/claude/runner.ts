@@ -76,6 +76,12 @@ function resolveClaudeBin(): string | undefined {
 
 export const CLAUDE_BIN_PATH = resolveClaudeBin();
 console.log("[lmcanvas] CLAUDE_BIN_PATH =", CLAUDE_BIN_PATH);
+
+// Prefer the user's own claude (Settings → binary path, default "claude" on PATH):
+// the SDK-bundled binary lags behind and rejects newer models.
+export function claudeExecutable(binPath: string | undefined): string | undefined {
+  return findExecutable(binPath, process.env.PATH) ?? CLAUDE_BIN_PATH;
+}
 import type {
   BetaContentBlock,
   BetaRawContentBlockDeltaEvent,
@@ -93,8 +99,9 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages/messages.mjs";
 import type { WebContents } from "electron";
 import type { Attachment } from "@shared/ipc";
-import type { ProviderSessionRef } from "@shared/types";
+import { isClaudeEffort, type ProviderSessionRef, type ReasoningEffort } from "@shared/types";
 import { buildAskUserServer } from "./askUserMcp";
+import { findExecutable } from "./configuredBin";
 import {
   isAuthError,
   isPolicyRefusal,
@@ -132,6 +139,8 @@ export type { RunnerEvent };
 export type RunClaudeOpts = {
   cwd: string;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
+  binPath?: string;
   systemPrompt?: string;
   attachments?: Attachment[];
   signal?: AbortSignal;
@@ -217,6 +226,8 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
         permissionMode: opts.planMode ? "plan" : "bypassPermissions",
         allowDangerouslySkipPermissions: !opts.planMode,
         model: opts.model,
+        // Codex-only levels (e.g. "ultra") would make `claude --effort` fail.
+        ...(isClaudeEffort(opts.reasoningEffort) ? { effort: opts.reasoningEffort } : {}),
         resume:
           opts.currentSession?.provider === "claude"
             ? opts.currentSession.id
@@ -228,7 +239,7 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
           opts.parentSession?.provider === "claude"
             ? true
             : undefined,
-        pathToClaudeCodeExecutable: CLAUDE_BIN_PATH,
+        pathToClaudeCodeExecutable: claudeExecutable(opts.binPath),
         // chatOnly: raw system prompt (no claude_code preset) → drops ~10k
         // tokens of agentic tool instructions on every turn, big TTFT win.
         systemPrompt: systemPromptOption,

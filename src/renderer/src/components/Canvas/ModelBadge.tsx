@@ -66,7 +66,11 @@ export function ModelBadge({ nodeId, popoverSide }: Props) {
                 role="option"
                 aria-selected={isActive}
                 onClick={() => {
-                  setNodeSettings(nodeId, { provider: p });
+                  // Effort levels differ per provider, so a switch drops the old one.
+                  setNodeSettings(
+                    nodeId,
+                    isActive ? { provider: p } : { provider: p, reasoningEffort: undefined },
+                  );
                   close();
                 }}
                 className={clsx(

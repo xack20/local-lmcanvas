@@ -3,11 +3,12 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKAssistantMessage, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { BetaContentBlock, BetaTextBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages.mjs";
 import { cleanCanvasName } from "@shared/canvasName";
-import { CLAUDE_BIN_PATH } from "../claude/runner";
+import { claudeExecutable } from "../claude/runner";
 
 type GenerateCanvasNameArgs = {
   prompt: string;
   model?: string;
+  binPath?: string;
   signal?: AbortSignal;
 };
 
@@ -28,6 +29,7 @@ function assistantText(msg: SDKAssistantMessage): string {
 export async function generateCanvasName({
   prompt,
   model,
+  binPath,
   signal,
 }: GenerateCanvasNameArgs): Promise<string | null> {
   const trimmed = prompt.trim();
@@ -57,7 +59,7 @@ ${trimmed}`;
       options: {
         cwd: homedir(),
         model,
-        pathToClaudeCodeExecutable: CLAUDE_BIN_PATH,
+        pathToClaudeCodeExecutable: claudeExecutable(binPath),
         systemPrompt: SYSTEM_PROMPT,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
