@@ -101,6 +101,10 @@ export async function runCompaction(req: CompactionRequest): Promise<CompactResu
       }
     }
     throw new Error("Claude Code ended before compacting.");
+  } catch (error) {
+    // Stopping kills Claude Code, and the SDK then throws its own abort error.
+    if (req.signal?.aborted) throw new Error(COMPACTION_STOPPED_MESSAGE);
+    throw error;
   } finally {
     req.signal?.removeEventListener("abort", stop);
     clearTimeout(timer);

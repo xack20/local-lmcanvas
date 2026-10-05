@@ -1,6 +1,7 @@
 // src/main/claude/compaction.test.mjs
 import { describe, expect, test } from "bun:test";
 import { compactFocus, runCompaction } from "./compaction.ts";
+import { COMPACTION_STOPPED_MESSAGE } from "../../shared/contextSize.ts";
 
 function fakeQuery(messages, { usage, summary } = {}) {
   const seen = {};
@@ -55,6 +56,15 @@ describe("runCompaction", () => {
     expect(seenAbort.aborted).toBe(true);
     const neverCalled = () => { throw new Error("should not start"); };
     await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn: neverCalled, signal: stop.signal })).rejects.toThrow("stopped");
+  });
+
+  test("a stop is reported as stopped even when the SDK throws its own abort error", async () => {
+    const stop = new AbortController();
+    const queryFn = () => Object.assign((async function* () {
+      stop.abort();
+      throw new Error("Claude Code process aborted by user");
+    })(), { getContextUsage: async () => USAGE });
+    await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal })).rejects.toThrow(COMPACTION_STOPPED_MESSAGE);
   });
 
   test("in place resumes without forking", async () => {
