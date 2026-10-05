@@ -57,7 +57,7 @@ export function checkForUpdatesNow(): void {
   if (UPDATES_DISABLED) {
     notify(
       "Updates are off",
-      "This is a locally patched build. Rebuild it from ~/projects/local-lmcanvas to update.",
+      "This is a locally patched build. Rebuild it from your local-lmcanvas checkout to update.",
     );
     return;
   }
