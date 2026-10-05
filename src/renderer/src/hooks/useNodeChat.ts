@@ -29,6 +29,7 @@ export function useNodeChat(nodeId: NodeId) {
       if (!canvasId) {
         return;
       }
+      if (storeApi.getState().lock !== "held") return;
 
       setStreaming(true);
 

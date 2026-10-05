@@ -386,6 +386,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           lockHolder: lock.ok ? null : lock.holderKind,
           dirty: { count: 0, lastChangeAt: 0 },
         });
+        if (!lock.ok) get().setSelectedNodeIds([]);
         const prompt = isUnnamedCanvasName(canvas.name)
           ? firstUserPrompt(canvas.nodes)
           : null;
@@ -921,7 +922,9 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       },
 
       markLockLost: (canvasId) => {
-        if (get().canvasId === canvasId) set({ lock: "lost", lockHolder: null });
+        if (get().canvasId !== canvasId) return;
+        set({ lock: "lost", lockHolder: null });
+        get().setSelectedNodeIds([]);
       },
 
       releaseLock: () => {

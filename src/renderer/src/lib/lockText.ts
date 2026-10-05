@@ -17,7 +17,8 @@ export function lockOverlayText(
   if (state === "lost") {
     return {
       title: "This chat was opened somewhere else.",
-      detail: "It's read-only here until you take it back.",
+      detail:
+        "It's read-only here. Anything not yet saved here is replaced by the latest version if you take it back.",
     };
   }
   return null;

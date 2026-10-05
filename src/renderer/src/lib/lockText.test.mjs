@@ -9,6 +9,7 @@ describe("lockOverlayText", () => {
   });
   test("explains a lost lock", () => {
     expect(lockOverlayText("lost", null).title).toBe("This chat was opened somewhere else.");
+    expect(lockOverlayText("lost", null).detail).toContain("replaced");
   });
   test("shows nothing while the chat is held here", () => {
     expect(lockOverlayText("held", null)).toBeNull();
