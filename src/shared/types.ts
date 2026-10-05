@@ -156,6 +156,11 @@ export type NodeSettings = {
   serviceTier?: CodexServiceTier;
 };
 
+export type BrowserAccessSettings = {
+  enabled: boolean;
+  keepAwake: boolean;
+};
+
 export type CanvasNode = {
   id: NodeId;
   type: CanvasNodeType;
@@ -240,4 +245,6 @@ export type AppSettings = {
   recentBranches?: string[];
   /** Last node-level overrides applied anywhere; used to seed new orphan nodes. */
   lastNodeSettings?: NodeSettings;
+  /** Browser access over Tailscale; changed only through the web:* channels. */
+  browserAccess?: BrowserAccessSettings;
 };

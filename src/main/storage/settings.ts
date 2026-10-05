@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type {
   AppSettings,
+  BrowserAccessSettings,
   CodexServiceTier,
   NodeSettings,
   Provider,
@@ -25,6 +26,7 @@ const DEFAULTS: AppSettings = {
   terseToolNarration: false,
   recentFolders: [],
   recentBranches: [],
+  browserAccess: { enabled: false, keepAwake: true },
 };
 
 function sanitizeRecents(values: unknown): string[] {
@@ -77,6 +79,14 @@ function sanitizeNodeSettings(raw: unknown): NodeSettings | undefined {
     : undefined;
 }
 
+function sanitizeBrowserAccess(raw: unknown): BrowserAccessSettings {
+  const value =
+    typeof raw === "object" && raw !== null
+      ? (raw as Partial<Record<keyof BrowserAccessSettings, unknown>>)
+      : {};
+  return { enabled: value.enabled === true, keepAwake: value.keepAwake !== false };
+}
+
 function mergeWithDefaults(s: Partial<AppSettings>): AppSettings {
   const providers = {
     claude: {
@@ -99,6 +109,7 @@ function mergeWithDefaults(s: Partial<AppSettings>): AppSettings {
     providers,
     recentFolders: sanitizeRecents(s.recentFolders),
     recentBranches: sanitizeRecents(s.recentBranches),
+    browserAccess: sanitizeBrowserAccess(s.browserAccess),
     ...(lastNodeSettings ? { lastNodeSettings } : { lastNodeSettings: undefined }),
   };
 }
@@ -114,6 +125,21 @@ export async function readSettings(): Promise<AppSettings> {
 }
 
 export async function writeSettings(settings: AppSettings): Promise<AppSettings> {
+  const stored = await readSettings();
+  return persist({ ...settings, browserAccess: stored.browserAccess });
+}
+
+export async function writeBrowserAccess(
+  patch: Partial<BrowserAccessSettings>,
+): Promise<AppSettings> {
+  const stored = await readSettings();
+  return persist({
+    ...stored,
+    browserAccess: { ...sanitizeBrowserAccess(stored.browserAccess), ...patch },
+  });
+}
+
+async function persist(settings: AppSettings): Promise<AppSettings> {
   await ensureDirs();
   const merged = mergeWithDefaults(settings);
   await atomicWriteFile(SETTINGS_FILE, JSON.stringify(merged, null, 2));
