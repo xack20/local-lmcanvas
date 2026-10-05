@@ -380,6 +380,9 @@ function registerIpc(): void {
     const planMode = Boolean(inlinePlanMode) || Boolean(nodeSettings?.planMode);
     const chatOnly = Boolean(inlineChatOnly) || Boolean(nodeSettings?.chatOnly);
 
+    // The client may have gone while the canvas and settings were read; its onGone
+    // cleanup has already run, so a run started now would never be stopped.
+    if (client.isGone()) return;
     const controller = new AbortController();
     activeChats.add(chatId, { controller, nodeId, canvasId, client });
 
