@@ -7,16 +7,25 @@ const OURS = `http://127.0.0.1:${WEB_PORT}`;
 
 function harness({ info, serve, portFree = true, keepAwake = true } = {}) {
   const calls = [];
+  const faults = {};
   const tsState = {
     info: info ?? { running: true, host: HOST, ownerLogin: "me@example.com", httpsAvailable: true },
     serve: serve ?? { httpsInUse: false, proxiesTo: null },
   };
   const tailscale = {
-    info: async () => tsState.info,
-    serveState: async () => tsState.serve,
+    info: async () => {
+      if (faults.info) throw faults.info;
+      return tsState.info;
+    },
+    serveState: async () => {
+      if (faults.serveState) throw faults.serveState;
+      return tsState.serve;
+    },
     enableServe: async (port) => {
       calls.push(["enableServe", port]);
       tsState.serve = { httpsInUse: true, proxiesTo: `http://127.0.0.1:${port}` };
+      // The mapping is already applied when this throws, like a CLI timeout.
+      if (faults.enableServe) throw faults.enableServe;
     },
     disableServe: async () => {
       calls.push(["disableServe"]);
@@ -27,6 +36,7 @@ function harness({ info, serve, portFree = true, keepAwake = true } = {}) {
   const server = {
     listen: async (port) => {
       calls.push(["listen", port]);
+      if (faults.listen) throw faults.listen;
       listening = port;
     },
     close: async () => {
@@ -53,6 +63,11 @@ function harness({ info, serve, portFree = true, keepAwake = true } = {}) {
     },
     readSettings: async () => ({ browserAccess }),
     writeBrowserAccess: async (patch) => {
+      if (faults.write) {
+        const error = faults.write;
+        faults.write = undefined;
+        throw error;
+      }
       browserAccess = { ...browserAccess, ...patch };
       return { browserAccess };
     },
@@ -68,7 +83,7 @@ function harness({ info, serve, portFree = true, keepAwake = true } = {}) {
     expireBrowserClients: () => calls.push(["expireClients"]),
     now: () => 1_000,
   });
-  return { service, calls, tsState, awake, settings: () => browserAccess };
+  return { service, calls, tsState, faults, server, awake, settings: () => browserAccess };
 }
 
 describe("createWebService", () => {
@@ -162,9 +177,77 @@ describe("createWebService", () => {
     const h = harness();
     const [first, second] = await Promise.all([h.service.setEnabled(true), h.service.setEnabled(true)]);
     expect(h.calls.filter(([name]) => name === "listen")).toEqual([["listen", WEB_PORT]]);
-    expect(h.calls.filter(([name]) => name === "enableServe").length).toBeLessThanOrEqual(1);
+    expect(h.calls.filter(([name]) => name === "enableServe")).toEqual([["enableServe", WEB_PORT]]);
     expect(h.calls.find(([name]) => name === "close")).toBeUndefined();
     expect(first.running).toBe(true);
     expect(second.running).toBe(true);
+  });
+
+  test("enabling while already live is a no-op that never consults Tailscale", async () => {
+    const h = harness();
+    await h.service.setEnabled(true);
+    h.faults.info = new Error("tailscale stopped");
+    const status = await h.service.setEnabled(true);
+    expect(status).toMatchObject({ enabled: true, running: true, problem: null });
+    expect(h.calls).toEqual([["listen", WEB_PORT], ["enableServe", WEB_PORT]]);
+    expect(h.awake.size).toBe(1);
+  });
+
+  test("a re-enable that finds Tailscale stopped still leaves a clean disable", async () => {
+    const h = harness();
+    await h.service.setEnabled(true);
+    h.faults.info = new Error("tailscale stopped");
+    await h.service.setEnabled(true);
+    h.faults.info = undefined;
+    await h.service.setEnabled(false);
+    expect(h.tsState.serve).toEqual({ httpsInUse: false, proxiesTo: null });
+    expect(h.calls.slice(2)).toEqual([["disableServe"], ["close"], ["expireClients"]]);
+    expect(h.server.port()).toBeNull();
+  });
+
+  test("a re-enable whose Serve lookup throws still leaves a clean disable", async () => {
+    const h = harness();
+    await h.service.setEnabled(true);
+    h.faults.serveState = new Error("serve status failed");
+    await h.service.setEnabled(true);
+    h.faults.serveState = undefined;
+    await h.service.setEnabled(false);
+    expect(h.tsState.serve).toEqual({ httpsInUse: false, proxiesTo: null });
+    expect(h.calls.slice(2)).toEqual([["disableServe"], ["close"], ["expireClients"]]);
+    expect(h.server.port()).toBeNull();
+  });
+
+  test("a Serve enable that applies the mapping and then throws is rolled back", async () => {
+    const h = harness();
+    h.faults.enableServe = new Error("timed out");
+    const status = await h.service.setEnabled(true);
+    expect(status).toMatchObject({ enabled: false, running: false, url: null });
+    expect(status.problem).toContain("Couldn't set up Tailscale Serve: timed out");
+    expect(h.tsState.serve).toEqual({ httpsInUse: false, proxiesTo: null });
+    expect(h.calls).toEqual([["listen", WEB_PORT], ["enableServe", WEB_PORT], ["disableServe"], ["close"]]);
+    expect(h.server.port()).toBeNull();
+    expect(h.service.gateContext()).toBeNull();
+    expect(h.awake.size).toBe(0);
+  });
+
+  test("losing the port race after the check reports the port as busy", async () => {
+    const h = harness();
+    h.faults.listen = Object.assign(new Error("listen EADDRINUSE: address already in use 127.0.0.1:4317"), {
+      code: "EADDRINUSE",
+    });
+    const status = await h.service.setEnabled(true);
+    expect(status).toMatchObject({ enabled: false, running: false });
+    expect(status.problem).toContain("Port 4317");
+    expect(status.problem).not.toContain("Couldn't set up");
+    expect(h.calls.find(([name]) => name === "enableServe")).toBeUndefined();
+    expect(h.calls.find(([name]) => name === "disableServe")).toBeUndefined();
+  });
+
+  test("a failed operation does not block the ones queued after it", async () => {
+    const h = harness();
+    h.faults.write = new Error("disk full");
+    await expect(h.service.setKeepAwake(true)).rejects.toThrow("disk full");
+    const status = await h.service.setEnabled(true);
+    expect(status).toMatchObject({ enabled: true, running: true, problem: null });
   });
 });

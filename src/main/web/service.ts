@@ -48,6 +48,9 @@ export function createWebService(deps: WebServiceDeps): WebService {
   const port = deps.port ?? WEB_PORT;
   const now = deps.now ?? Date.now;
   let live: { host: string; ownerLogin: string } | null = null;
+  // The host we pointed (or found already pointing) a Serve mapping at. Kept
+  // apart from `live` so a failed or timed-out enable can still be undone.
+  let published: string | null = null;
   let problem: string | null = null;
   let blockerId: number | null = null;
 
@@ -76,7 +79,38 @@ export function createWebService(deps: WebServiceDeps): WebService {
     }
   };
 
+  // Removes our Serve mapping, but only while it still points at our port.
+  const removeOurMapping = async (): Promise<void> => {
+    const host = published;
+    if (host === null) return;
+    try {
+      const serve = await deps.tailscale.serveState(host).catch(() => null);
+      if (serve?.proxiesTo === serveTarget(port)) {
+        await deps.tailscale.disableServe().catch((error: unknown) => {
+          console.warn("[web] couldn't remove Serve mapping:", error);
+        });
+      }
+    } finally {
+      published = null;
+    }
+  };
+
+  const listenOnPort = async (): Promise<string | null> => {
+    if (!(await deps.isPortFree(port))) return PROBLEMS.portBusy(port);
+    try {
+      await deps.server.listen(port);
+      return null;
+    } catch (error) {
+      // Someone took the port between the check and the bind.
+      if ((error as NodeJS.ErrnoException)?.code === "EADDRINUSE") return PROBLEMS.portBusy(port);
+      throw error;
+    }
+  };
+
+  // Undoes only what this call set up: a server it opened, a mapping it
+  // published or reused.
   const start = async (): Promise<string | null> => {
+    let openedServer = false;
     try {
       const info = await deps.tailscale.info().catch(() => null);
       if (!info || !info.running) return PROBLEMS.notRunning;
@@ -86,27 +120,24 @@ export function createWebService(deps: WebServiceDeps): WebService {
       const ours = serve.proxiesTo === serveTarget(port);
       if (serve.httpsInUse && !ours) return PROBLEMS.httpsTaken;
       if (deps.server.port() === null) {
-        if (!(await deps.isPortFree(port))) return PROBLEMS.portBusy(port);
-        await deps.server.listen(port);
+        const busy = await listenOnPort();
+        if (busy) return busy;
+        openedServer = true;
       }
+      // Recorded before enableServe: a timeout can still mean it was applied.
+      published = info.host;
       if (!ours) await deps.tailscale.enableServe(port);
       live = { host: info.host, ownerLogin: info.ownerLogin };
       return null;
     } catch (error) {
-      await deps.server.close();
+      await removeOurMapping();
+      if (openedServer) await deps.server.close();
       return `Couldn't set up Tailscale Serve: ${error instanceof Error ? error.message : String(error)}`;
     }
   };
 
   const stop = async (): Promise<void> => {
-    if (live) {
-      const serve = await deps.tailscale.serveState(live.host).catch(() => null);
-      if (serve?.proxiesTo === serveTarget(port)) {
-        await deps.tailscale.disableServe().catch((error: unknown) => {
-          console.warn("[web] couldn't remove Serve mapping:", error);
-        });
-      }
-    }
+    await removeOurMapping();
     live = null;
     await deps.server.close();
     deps.expireBrowserClients();
@@ -137,13 +168,16 @@ export function createWebService(deps: WebServiceDeps): WebService {
           await deps.writeBrowserAccess({ enabled: false });
           return status();
         }
-        problem = await start();
-        if (problem) {
-          live = null;
-          await deps.writeBrowserAccess({ enabled: false });
-        } else {
+        if (live) {
+          // Already running: nothing to set up, and nothing to lose by asking
+          // Tailscale again.
+          problem = null;
           await deps.writeBrowserAccess({ enabled: true });
+          applyAwake(await keepAwakeSetting());
+          return status();
         }
+        problem = await start();
+        await deps.writeBrowserAccess({ enabled: problem === null });
         applyAwake(await keepAwakeSetting());
         return status();
       }),

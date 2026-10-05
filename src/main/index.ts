@@ -164,6 +164,19 @@ function registerWebChannels(service: WebService): void {
   api.handle("web:removeDevice", async (_client, deviceId: string) => service.removeDevice(deviceId), "desktop-only");
 }
 
+// Browser access is optional: if it can't be set up, the desktop app still
+// starts and just has no web:* channels.
+async function setUpBrowserAccess(): Promise<WebService | null> {
+  try {
+    const service = await createBrowserAccess();
+    registerWebChannels(service);
+    return service;
+  } catch (error) {
+    console.warn("[web] browser access unavailable:", error);
+    return null;
+  }
+}
+
 const CLAUDE_FABLE_POLICY_FALLBACK_MODEL = "claude-opus-4-8";
 
 function isFableModel(model: string | undefined): model is string {
@@ -667,15 +680,14 @@ app.whenReady().then(async () => {
   }
 
   registerIpc();
-  const webService = await createBrowserAccess();
-  registerWebChannels(webService);
+  const webService = await setUpBrowserAccess();
   bindRegistryToIpc(api, ipcMain, (sender) => watchClient(desktopClient(sender)));
   activeWebService = webService;
   createWindow();
   initAutoUpdate();
   installUpdateMenuItem();
   void webService
-    .startIfEnabled()
+    ?.startIfEnabled()
     .catch((error) => console.warn("[web] browser access not started:", error));
 
   void readSettings()
@@ -695,6 +707,8 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", (event) => {
   if (activeWebService) {
+    // A second quit while this shutdown is in flight finds no service and quits
+    // at once: a deliberate escape hatch, at the cost of possibly skipping teardown.
     event.preventDefault();
     const service = activeWebService;
     activeWebService = null;
