@@ -1,7 +1,9 @@
 // .mjs keeps the bun:test import out of `bun run typecheck`.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
@@ -22,9 +24,9 @@ let clients;
 let cookie;
 let ranSecret = 0;
 
-function call({ method = "GET", path, headers = {}, body }) {
+function call({ method = "GET", path, headers = {}, body, targetPort = port }) {
   return new Promise((resolve, reject) => {
-    const req = httpRequest({ host: "127.0.0.1", port, method, path, headers }, (res) => {
+    const req = httpRequest({ host: "127.0.0.1", port: targetPort, method, path, headers }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, text: Buffer.concat(chunks).toString("utf-8") }));
@@ -214,5 +216,81 @@ describe("live connection", () => {
     server.disconnectDevice(device.id);
     await closed;
     expect(clients.get("tabws002")).toBeUndefined();
+  });
+
+  test("a malformed frame disconnects that tab and the server keeps serving", async () => {
+    const upgradeHeaders = paired({
+      Origin: ORIGIN,
+      Connection: "Upgrade",
+      Upgrade: "websocket",
+      "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+    });
+    const request = [
+      "GET /ws?client=tabws003 HTTP/1.1",
+      ...Object.entries(upgradeHeaders).map(([name, value]) => `${name}: ${value}`),
+      "",
+      "",
+    ].join("\r\n");
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    const closed = new Promise((r) => socket.on("close", r));
+    socket.write(request);
+    await new Promise((r) => socket.once("data", r));
+    socket.write(Buffer.from([0x81, 0x01, 0x41]));
+    await closed;
+    expect((await apiCall("echo", [1])).status).toBe(200);
+  });
+});
+
+describe("device activity bookkeeping", () => {
+  let activityRoot;
+  let activityServer;
+  let activityCookie;
+  let failWrites = false;
+  let clock = Date.now();
+
+  beforeAll(async () => {
+    activityRoot = mkdtempSync(join(tmpdir(), "lmc-activity-"));
+    mkdirSync(join(activityRoot, "renderer"));
+    writeFileSync(join(activityRoot, "renderer", "index.html"), "<!doctype html><title>app</title>");
+    const store = await loadDeviceStore(join(activityRoot, "devices.json"), async (path, contents) => {
+      if (failWrites) throw new Error("disk full");
+      await writeFile(path, contents);
+    });
+    activityServer = createWebServer({
+      registry: createApiRegistry(),
+      clients: createBrowserClientRegistry({ graceMs: 60_000 }),
+      devices: store,
+      gateContext: () => ({ expectedHost: HOST, ownerLogin: OWNER, isPairedDevice: (k) => store.findByKey(k) !== undefined }),
+      staticRoot: join(activityRoot, "renderer"),
+      homeDir: activityRoot,
+      now: () => clock,
+    });
+    await activityServer.listen(0);
+    const { token } = store.createPairingToken(Date.now());
+    const pairing = await call({ path: `/pair?token=${token}`, headers: trusted(), targetPort: activityServer.port() });
+    activityCookie = pairing.headers["set-cookie"][0].split(";")[0];
+    clock += 2 * 60 * 1000;
+  });
+
+  afterAll(async () => {
+    await activityServer.close();
+    rmSync(activityRoot, { recursive: true, force: true });
+  });
+
+  test("a failed last-seen write is logged and the request still succeeds", async () => {
+    failWrites = true;
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      const res = await call({ path: "/", headers: trusted({ Cookie: activityCookie }), targetPort: activityServer.port() });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(res.status).toBe(200);
+      expect(warnings).toEqual(["[web] couldn't record device activity: Error: disk full"]);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });

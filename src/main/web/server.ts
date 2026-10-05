@@ -130,7 +130,11 @@ export function createWebServer(deps: WebServerDeps): WebServer {
       return { ok: false, status: result.status };
     }
     const device = deviceKey ? deps.devices.findByKey(deviceKey) : undefined;
-    if (device) void deps.devices.touch(device.id, now());
+    if (device) {
+      deps.devices.touch(device.id, now()).catch((error: unknown) => {
+        console.warn("[web] couldn't record device activity:", error);
+      });
+    }
     return { ok: true, deviceId: device?.id ?? null };
   };
 
@@ -236,6 +240,10 @@ export function createWebServer(deps: WebServerDeps): WebServer {
     if (!auth.deviceId || !CLIENT_ID_PATTERN.test(clientId)) return refuseUpgrade(socket, 400);
     const deviceId = auth.deviceId;
     wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.on("error", (error) => {
+        console.warn("[web] live connection error:", error.message);
+        ws.terminate();
+      });
       const tracked: SocketLike = { send: (data) => ws.send(data), close: () => ws.close() };
       sockets.set(ws, deviceId);
       const { resumed } = deps.clients.attach(clientId, deviceId, tracked);
