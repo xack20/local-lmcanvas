@@ -47,10 +47,20 @@ export function createBrowserClientRegistry(opts: {
     const { state } = record;
     scheduler.clearTimeout(state.timer);
     state.gone = true;
-    state.socket?.close();
+    try {
+      state.socket?.close();
+    } catch (error) {
+      console.error("[web] browser client cleanup failed:", error);
+    }
     state.socket = null;
     state.queue = [];
-    for (const listener of [...state.listeners]) listener();
+    for (const listener of [...state.listeners]) {
+      try {
+        listener();
+      } catch (error) {
+        console.error("[web] browser client cleanup failed:", error);
+      }
+    }
   };
 
   const startGrace = (clientId: string, state: ClientState): void => {
@@ -113,8 +123,15 @@ export function createBrowserClientRegistry(opts: {
       const { state } = record;
       scheduler.clearTimeout(state.timer);
       state.timer = undefined;
-      if (state.socket && state.socket !== socket) state.socket.close();
+      const oldSocket = state.socket;
       state.socket = socket;
+      if (oldSocket && oldSocket !== socket) {
+        try {
+          oldSocket.close();
+        } catch (error) {
+          console.error("[web] browser client cleanup failed:", error);
+        }
+      }
       const pending = state.queue;
       state.queue = [];
       for (const message of pending) socket.send(message);

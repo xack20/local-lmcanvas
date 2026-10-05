@@ -121,4 +121,56 @@ describe("createBrowserClientRegistry", () => {
     registry.expireAll();
     expect(a.isGone() && b.isGone()).toBe(true);
   });
+
+  test("a throwing cleanup step does not skip the others", () => {
+    const { registry } = setup();
+    let errorLogged = false;
+    const oldError = console.error;
+    console.error = () => { errorLogged = true; };
+    try {
+      const socketA = { messages: [], closed: false, send: () => {}, close: () => { throw new Error("close failed"); } };
+      const { client: clientA } = registry.attach("tab1", "dev1", socketA);
+      let listenerACount = 0;
+      let listenerBCount = 0;
+      clientA.onGone(() => {
+        listenerACount++;
+        throw new Error("listener failed");
+      });
+      clientA.onGone(() => {
+        listenerACount++;
+      });
+      const socketB = fakeSocket();
+      const { client: clientB } = registry.attach("tab2", "dev1", socketB);
+      clientB.onGone(() => {
+        listenerBCount++;
+      });
+      registry.expireDevice("dev1");
+      expect(errorLogged).toBe(true);
+      expect(listenerACount).toBe(2);
+      expect(listenerBCount).toBe(1);
+      expect(clientA.isGone()).toBe(true);
+      expect(clientB.isGone()).toBe(true);
+    } finally {
+      console.error = oldError;
+    }
+  });
+
+  test("re-attaching while the old socket's close detaches does not leave a grace timer", () => {
+    const { registry, scheduler } = setup();
+    const first = {
+      messages: [],
+      closed: false,
+      send: () => {},
+      close() {
+        this.closed = true;
+        registry.detach("tab1", this);
+      }
+    };
+    const { client } = registry.attach("tab1", "dev1", first);
+    const second = fakeSocket();
+    registry.attach("tab1", "dev1", second);
+    expect(scheduler.pending()).toBe(0);
+    scheduler.fireAll();
+    expect(client.isGone()).toBe(false);
+  });
 });
