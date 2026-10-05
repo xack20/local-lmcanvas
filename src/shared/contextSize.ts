@@ -1,5 +1,5 @@
 import { blocksToPlainText } from "./history";
-import type { CanvasNode, CompactionBlock, ContextBreakdown, NodeId } from "./types";
+import type { CanvasNode, CompactionBlock, ContextBreakdown, Message, NodeId } from "./types";
 
 export const CHARS_PER_TOKEN = 4;
 export const DEFAULT_SETUP_TOKENS = 20_000;
@@ -57,25 +57,69 @@ function parentsOf(node: CanvasNode, nodes: Nodes): CanvasNode[] {
   return node.data.chat.parentIds.flatMap((id) => (nodes[id] ? [nodes[id]] : []));
 }
 
+// Badges re-size every node on every store change; messages are immutable, so their sizes are cached.
+const messageChars = new WeakMap<Message, number>();
+const messagesTokens = new WeakMap<Message[], number>();
+const messagesCompactions = new WeakMap<Message[], number>();
+
+function charsOf(message: Message): number {
+  let chars = messageChars.get(message);
+  if (chars === undefined) {
+    chars = blocksToPlainText(message.blocks).length;
+    messageChars.set(message, chars);
+  }
+  return chars;
+}
+
 function estimateOwnTokens(node: CanvasNode): number {
-  const chars = node.data.chat.messages.reduce((sum, m) => sum + blocksToPlainText(m.blocks).length, 0);
-  return Math.round(chars / CHARS_PER_TOKEN);
+  const messages = node.data.chat.messages;
+  let tokens = messagesTokens.get(messages);
+  if (tokens === undefined) {
+    tokens = Math.round(messages.reduce((sum, m) => sum + charsOf(m), 0) / CHARS_PER_TOKEN);
+    messagesTokens.set(messages, tokens);
+  }
+  return tokens;
+}
+
+function compactionsIn(messages: Message[]): number {
+  let count = messagesCompactions.get(messages);
+  if (count === undefined) {
+    count = messages.reduce((sum, m) => sum + m.blocks.filter((b) => b.type === "compaction").length, 0);
+    messagesCompactions.set(messages, count);
+  }
+  return count;
 }
 
 /** Exact when measured; otherwise the nearest measured ancestor's size plus estimates below it. */
-function combinedOf(node: CanvasNode, nodes: Nodes, setupTokens: number, seen: Set<NodeId>): Combined {
+// `seen` guards against cycles along the current path; `memo` keeps merge diamonds from being walked twice.
+function combinedOf(
+  node: CanvasNode,
+  nodes: Nodes,
+  setupTokens: number,
+  seen: Set<NodeId>,
+  memo: Map<NodeId, Combined>,
+): Combined {
   if (node.data.context) {
     return { tokens: node.data.context.tokens, exact: node.data.context.exact, window: node.data.context.window };
   }
   if (seen.has(node.id)) return { tokens: estimateOwnTokens(node), exact: false, window: undefined };
-  const nextSeen = new Set(seen).add(node.id);
-  const parents = parentsOf(node, nodes).map((p) => combinedOf(p, nodes, setupTokens, nextSeen));
+  const known = memo.get(node.id);
+  if (known) return known;
+  seen.add(node.id);
+  let parents: Combined[];
+  try {
+    parents = parentsOf(node, nodes).map((p) => combinedOf(p, nodes, setupTokens, seen, memo));
+  } finally {
+    seen.delete(node.id);
+  }
   const base = parents.reduce<Combined | null>((best, p) => (best === null || p.tokens > best.tokens ? p : best), null);
-  return {
+  const combined = {
     tokens: (base ? base.tokens : setupTokens) + estimateOwnTokens(node),
     exact: false,
     window: base?.window,
   };
+  memo.set(node.id, combined);
+  return combined;
 }
 
 function countCompactions(node: CanvasNode, nodes: Nodes): number {
@@ -84,9 +128,7 @@ function countCompactions(node: CanvasNode, nodes: Nodes): number {
   let current: CanvasNode | undefined = node;
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
-    for (const m of current.data.chat.messages) {
-      count += m.blocks.filter((b) => b.type === "compaction").length;
-    }
+    count += compactionsIn(current.data.chat.messages);
     const parentId: NodeId | undefined = current.data.chat.parentIds[0];
     current = parentId ? nodes[parentId] : undefined;
   }
@@ -102,8 +144,9 @@ export function contextView(
   const node = nodes[nodeId];
   if (!node) return null;
   const setupTokens = opts.setupTokens ?? DEFAULT_SETUP_TOKENS;
-  const combined = combinedOf(node, nodes, setupTokens, new Set());
-  const parents = parentsOf(node, nodes).map((p) => combinedOf(p, nodes, setupTokens, new Set([nodeId])));
+  const memo = new Map<NodeId, Combined>();
+  const combined = combinedOf(node, nodes, setupTokens, new Set(), memo);
+  const parents = parentsOf(node, nodes).map((p) => combinedOf(p, nodes, setupTokens, new Set([nodeId]), memo));
   const isRoot = parents.length === 0;
   const largestParent = parents.reduce((max, p) => Math.max(max, p.tokens), 0);
   const own = isRoot ? combined.tokens : Math.max(0, combined.tokens - largestParent);

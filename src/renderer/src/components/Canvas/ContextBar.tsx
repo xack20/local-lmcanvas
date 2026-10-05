@@ -8,8 +8,9 @@ import { useCanvasStore } from "@/hooks/useCanvasStore";
 export function ContextBar({ nodeId }: { nodeId: NodeId }) {
   const provider = useCanvasStore((s) => s.getEffectiveProvider(nodeId));
   const nodes = useCanvasStore((s) => s.nodes);
-  const view = useMemo(() => contextView(nodeId, nodes), [nodeId, nodes]);
-  if (provider !== "claude" || !view) return null;
+  // Other providers' nodes skip the sizing work entirely.
+  const view = useMemo(() => (provider === "claude" ? contextView(nodeId, nodes) : null), [provider, nodeId, nodes]);
+  if (!view) return null;
   return (
     <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] overflow-hidden rounded-b-[inherit] bg-transparent">
       <div

@@ -17,8 +17,9 @@ const LEVEL_CLASS: Record<ContextView["level"], string> = {
 export function ContextBadge({ nodeId, popoverSide, actions }: Props) {
   const provider = useCanvasStore((s) => s.getEffectiveProvider(nodeId));
   const nodes = useCanvasStore((s) => s.nodes);
-  const view = useMemo(() => contextView(nodeId, nodes), [nodeId, nodes]);
-  if (provider !== "claude" || !view) return null;
+  // Other providers' nodes skip the sizing work entirely.
+  const view = useMemo(() => (provider === "claude" ? contextView(nodeId, nodes) : null), [provider, nodeId, nodes]);
+  if (!view) return null;
 
   return (
     <BadgePopover

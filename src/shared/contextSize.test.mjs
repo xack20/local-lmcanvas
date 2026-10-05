@@ -100,3 +100,21 @@ describe("contextLevel and compactionText", () => {
     expect(compactionText({ type: "compaction", trigger: "auto", before: null, after: null })).toBe("Context compacted (auto)");
   });
 });
+
+describe("contextView on big canvases", () => {
+  test("sizes a long unmeasured chain quickly once its nodes have been seen", () => {
+    // Badges and bars re-run contextView for every node on every store change (each streamed flush).
+    const nodes = {};
+    let previous;
+    for (let i = 0; i < 300; i += 1) {
+      const id = `n${i}`;
+      nodes[id] = node(id, previous ? [previous] : [], undefined, [text("user", "u".repeat(5_000)), text("assistant", "a".repeat(5_000))]);
+      previous = id;
+    }
+    const ids = Object.keys(nodes);
+    for (const id of ids) contextView(id, nodes);
+    const started = performance.now();
+    for (const id of ids) contextView(id, nodes);
+    expect(performance.now() - started).toBeLessThan(25);
+  });
+});
