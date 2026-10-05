@@ -13,6 +13,7 @@ import { readSettings, writeBrowserAccess, writeSettings } from "./storage/setti
 import { ROOT_DIR } from "./storage/paths";
 import { buildPromptWithHistory } from "./claude/history";
 import { createClaudeModelCatalog } from "./claude/models";
+import { loadModelWindows, type ModelWindows } from "./claude/modelWindows";
 import { claudeExecutable } from "./claude/runner";
 import { claudeEffortFor, claudeModelArg, resolveClaudeRun } from "@shared/claudeModels";
 import { runAgent, type RunnerEvent } from "./agents";
@@ -111,6 +112,8 @@ function createWindow(hash?: string): BrowserWindow {
 }
 
 const activeChats = createActiveChats();
+// Context windows seen per model (filled from each run's measurement), for sizing replays.
+let modelWindows: ModelWindows | null = null;
 const claudeModels = createClaudeModelCatalog({ executableFor: claudeExecutable });
 // How long a chat start waits for the (normally cached) Claude model list before running anyway.
 const CLAUDE_MODEL_LIST_BUDGET_MS = 2_000;
@@ -439,6 +442,25 @@ function registerIpc(): void {
             reason: ev.reason,
           });
           return;
+        case "compacting":
+          send({ chatId, type: "compacting", active: ev.active, ...(ev.error ? { error: ev.error } : {}) });
+          return;
+        case "compacted":
+          send({
+            chatId,
+            type: "compacted",
+            trigger: ev.trigger,
+            before: ev.before,
+            after: ev.after,
+            ...(ev.method ? { method: ev.method } : {}),
+          });
+          return;
+        case "context":
+          void modelWindows?.learn(ev.context.model, ev.context.window).catch((error: unknown) =>
+            console.warn("[context] couldn't save the model window:", error),
+          );
+          send({ chatId, type: "context", context: ev.context });
+          return;
         case "tool_use":
           send({
             chatId,
@@ -737,6 +759,7 @@ app.whenReady().then(async () => {
     // best-effort; fall through with whatever PATH we have
   }
 
+  modelWindows = await loadModelWindows(join(ROOT_DIR, "model-windows.json")).catch(() => null);
   registerIpc();
   const webService = await setUpBrowserAccess();
   bindRegistryToIpc(api, ipcMain, (sender) => watchClient(desktopClient(sender)));

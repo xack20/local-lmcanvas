@@ -4,6 +4,8 @@ import type {
   CanvasSummary,
   ClaudeModelList,
   CodexRuntimeInfo,
+  CompactionTrigger,
+  ContextSnapshot,
   ErrorCode,
   ImageMediaType,
   Message,
@@ -115,6 +117,16 @@ export type ChatEvent =
       isError: boolean;
     }
   | { chatId: string; type: "thinking_delta"; text: string }
+  | { chatId: string; type: "compacting"; active: boolean; error?: string }
+  | {
+      chatId: string;
+      type: "compacted";
+      trigger: CompactionTrigger;
+      before: number | null;
+      after: number | null;
+      method?: "summary" | "trimmed";
+    }
+  | { chatId: string; type: "context"; context: ContextSnapshot }
   | {
       chatId: string;
       type: "done";
