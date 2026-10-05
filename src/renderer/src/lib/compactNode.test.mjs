@@ -2,9 +2,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createCanvasStoreApi, makeBlankNode } from "../hooks/useCanvasStore.ts";
 import { SUMMARY_FALLBACK_TEXT, canCompact, compactNode } from "./compactNode.ts";
+import { COMPACTION_STOPPED_MESSAGE } from "../../../shared/contextSize.ts";
 
 const CANVAS_ID = "canvas-compact";
+let writes = [];
 function setup() {
+  writes = [];
   const node = makeBlankNode({ x: 0, y: 0 });
   node.data.chat.providerSession = { provider: "claude", id: "s1" };
   node.data.chat.messages = [
@@ -13,7 +16,7 @@ function setup() {
   ];
   globalThis.window = {
     api: {
-      canvases: { read: async () => ({ id: CANVAS_ID, name: "C", createdAt: 1, updatedAt: 1, nodes: [node], edges: [] }), write: async () => {} },
+      canvases: { read: async () => ({ id: CANVAS_ID, name: "C", createdAt: 1, updatedAt: 1, nodes: [node], edges: [] }), write: async (c) => { writes.push(c); } },
       settings: { read: async () => ({}), write: async (s) => s },
       canvasLock: { acquire: async () => ({ ok: true }), release: async () => {}, takeOver: async () => {} },
     },
@@ -98,5 +101,36 @@ describe("compactNode", () => {
     const out = await compactNode({ store, compact: async () => { throw new Error("Not enough messages to compact"); } }, { canvasId: CANVAS_ID, nodeId, mode: "inPlace" });
     expect(out).toEqual({ ok: false, error: "Couldn't compact: Not enough messages to compact" });
     expect(JSON.stringify(store.getState().nodes[nodeId])).toBe(before);
+  });
+
+  test("runs as an operation of its own, so the canvas, Stop and quitting all wait for it", async () => {
+    const nodeId = setup();
+    await store.getState().loadCanvas(CANVAS_ID);
+    let finish;
+    let runningDuringCall = false;
+    const compact = (args) => {
+      runningDuringCall = typeof args.chatId === "string" && store.getState().runningChats.has(args.chatId);
+      return new Promise((resolve) => { finish = resolve; });
+    };
+    const pending = compactNode({ store, compact }, { canvasId: CANVAS_ID, nodeId, mode: "summaryNode" });
+    expect(runningDuringCall).toBe(true);
+    store.getState().releaseLock(); // the pane switches to another canvas mid-compaction
+    expect(store.getState().lock).toBe("held");
+    finish({ sessionId: "s2", before: 2, after: 1, summary: "S", context: null });
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(writes.at(-1).nodes.length).toBe(2);
+    expect(store.getState().runningChats.size).toBe(0);
+    expect(store.getState().lock).not.toBe("held");
+  });
+
+  test("a stopped compaction isn't reported as a failure", async () => {
+    const nodeId = setup();
+    await store.getState().loadCanvas(CANVAS_ID);
+    const compact = async () => { throw new Error(`Error invoking remote method 'chat:compact': Error: ${COMPACTION_STOPPED_MESSAGE}`); };
+    const out = await compactNode({ store, compact }, { canvasId: CANVAS_ID, nodeId, mode: "inPlace" });
+    expect(out).toEqual({ ok: false, error: "Stopped." });
+    expect(store.getState().compactErrors[nodeId]).toBeUndefined();
+    expect(store.getState().runningChats.size).toBe(0);
   });
 });

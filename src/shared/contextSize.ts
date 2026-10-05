@@ -8,6 +8,8 @@ export const WARN_AT = 0.7;
 export const FULL_AT = 0.9;
 /** Longest focus text a manual compaction accepts. */
 export const MAX_COMPACT_FOCUS_CHARS = 500;
+/** What a compaction stopped on request reports, so it isn't shown as a failure. */
+export const COMPACTION_STOPPED_MESSAGE = "Compaction stopped.";
 
 export type ContextLevel = "ok" | "warn" | "full";
 

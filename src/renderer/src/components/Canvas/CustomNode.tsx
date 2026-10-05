@@ -340,6 +340,7 @@ function CustomNodeImpl(props: NodeProps) {
                 onStop={stop}
                 nodeId={id}
                 compacting={compacting}
+                onStopCompacting={() => void window.api.chat.cancelForNode(id)}
                 onSuggestionClick={(prompt) =>
                   branch({
                     prefill: prompt,

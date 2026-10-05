@@ -1,6 +1,6 @@
 import { query, type HookCallback, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { CompactResult } from "@shared/ipc";
-import { MAX_COMPACT_FOCUS_CHARS } from "@shared/contextSize";
+import { COMPACTION_STOPPED_MESSAGE, MAX_COMPACT_FOCUS_CHARS } from "@shared/contextSize";
 import { normalizeUsage } from "../agents/usage";
 import { measureContext } from "./contextUsage";
 import { heldOpenPrompt } from "./heldOpenPrompt";
@@ -21,7 +21,6 @@ export type CompactionRequest = {
   signal?: AbortSignal;
 };
 
-const STOPPED_MESSAGE = "Compaction stopped.";
 
 export function compactFocus(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
@@ -38,7 +37,7 @@ function cleanSummary(raw: string): string | null {
 
 /** Runs Claude Code's /compact on a session (in place, or on a fork) and reports what changed. */
 export async function runCompaction(req: CompactionRequest): Promise<CompactResult> {
-  if (req.signal?.aborted) throw new Error(STOPPED_MESSAGE);
+  if (req.signal?.aborted) throw new Error(COMPACTION_STOPPED_MESSAGE);
   const queryFn = req.queryFn ?? query;
   const controller = new AbortController();
   const stop = (): void => controller.abort();
@@ -78,7 +77,7 @@ export async function runCompaction(req: CompactionRequest): Promise<CompactResu
   let compactError: string | null = null;
   try {
     for await (const msg of session as AsyncIterable<SDKMessage>) {
-      if (req.signal?.aborted) throw new Error(STOPPED_MESSAGE);
+      if (req.signal?.aborted) throw new Error(COMPACTION_STOPPED_MESSAGE);
       const id = (msg as { session_id?: unknown }).session_id;
       if (typeof id === "string" && id.length > 0) sessionId = id;
       const event = mapSystemMessage(msg);

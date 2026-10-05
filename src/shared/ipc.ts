@@ -97,6 +97,8 @@ export type ChatStartArgs = {
 };
 
 export type CompactArgs = {
+  /** The renderer's id for this operation; Stop (chat:cancel / chat:cancelForNode) and quitting see it. */
+  chatId?: string;
   canvasId: string;
   nodeId: string;
   mode: "inPlace" | "summaryNode";

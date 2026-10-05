@@ -1,4 +1,6 @@
+import { nanoid } from "nanoid";
 import type { CompactResult, LmcApi } from "@shared/ipc";
+import { COMPACTION_STOPPED_MESSAGE } from "@shared/contextSize";
 import type { NodeId } from "@shared/types";
 import type { CanvasStoreApi, CanvasStoreState } from "@/hooks/useCanvasStore";
 
@@ -32,11 +34,21 @@ export async function compactNode(
   const session = node?.data.chat.providerSession;
   if (!node || !session || !canCompact(state, args.nodeId)) return { ok: false, error: "This node is busy." };
 
+  // A running operation like a reply: the canvas keeps its lock until the result is saved,
+  // and main can stop it, wait for it on quit, and see it on a takeover.
+  const operationId = `compact-${nanoid(10)}`;
+  const settle = (): void => {
+    const s = deps.store.getState();
+    s.chatSettled(operationId);
+    void s.save();
+  };
   state.setCompactError(args.nodeId, undefined);
   state.setCompacting(args.nodeId, true);
+  state.chatStarted(operationId);
   let result: CompactResult;
   try {
     result = await deps.compact({
+      chatId: operationId,
       canvasId: args.canvasId,
       nodeId: args.nodeId,
       mode: args.mode,
@@ -46,9 +58,15 @@ export async function compactNode(
       cwd: state.getEffectiveCwd(args.nodeId),
     });
   } catch (error) {
-    const message = `Couldn't compact: ${reasonOf(error)}`;
+    const reason = reasonOf(error);
     deps.store.getState().setCompacting(args.nodeId, false);
+    if (reason === COMPACTION_STOPPED_MESSAGE) {
+      settle();
+      return { ok: false, error: "Stopped." };
+    }
+    const message = `Couldn't compact: ${reason}`;
     deps.store.getState().setCompactError(args.nodeId, message);
+    settle();
     return { ok: false, error: message };
   }
 
@@ -63,7 +81,7 @@ export async function compactNode(
       after: result.after,
       ...(result.usage ? { usage: result.usage } : {}),
     });
-    void s.save();
+    settle();
     return summaryNodeId ? { ok: true, summaryNodeId } : { ok: false, error: "Couldn't add the summary node." };
   }
   s.setProviderSession(args.nodeId, { provider: "claude", id: result.sessionId });
@@ -79,6 +97,6 @@ export async function compactNode(
     });
   }
   if (result.context) s.setNodeContext(args.nodeId, result.context);
-  void s.save();
+  settle();
   return { ok: true };
 }

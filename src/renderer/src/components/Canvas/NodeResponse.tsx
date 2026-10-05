@@ -88,6 +88,8 @@ type Props = {
   onSuggestionClick?: (prompt: string) => void;
   /** Claude Code is summarizing this node's conversation right now. */
   compacting?: boolean;
+  /** Stops a manual compaction (the node is idle, so `onStop` has no run to stop). */
+  onStopCompacting?: () => void;
 };
 
 export function NodeResponse({
@@ -97,6 +99,7 @@ export function NodeResponse({
   imageDisplay = "thumbnail",
   onSuggestionClick,
   compacting = false,
+  onStopCompacting,
 }: Props) {
   const isUser = message.role === "user";
   const isError = message.status === "error";
@@ -195,9 +198,8 @@ export function NodeResponse({
       )}
 
       {compacting && !isStreaming && (
-        <div className="flex items-center gap-1.5 pt-0.5 text-[10px] text-muted-foreground">
-          <Loader2 size={12} className="animate-spin" />
-          <span className="node-shimmer font-medium">Compacting conversation…</span>
+        <div className="pt-0.5">
+          <GeneratingIndicator onStop={onStopCompacting} label="Compacting conversation…" compact />
         </div>
       )}
 

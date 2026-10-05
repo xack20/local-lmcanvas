@@ -32,6 +32,8 @@ export function useNodeChat(nodeId: NodeId) {
         return;
       }
       if (storeApi.getState().lock !== "held") return;
+      // A compaction is rewriting this node's session; a run now would write it at the same time.
+      if (storeApi.getState().compactingNodeIds[nodeId]) return;
 
       setStreaming(true);
 

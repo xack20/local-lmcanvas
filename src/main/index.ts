@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, MenuItem, nativeImage, powerSaveBlocker, shell, dialog } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import {
   listCanvases,
@@ -704,24 +705,34 @@ function registerIpc(): void {
       if (session?.provider !== "claude" || typeof session.id !== "string" || session.id.length === 0) {
         throw new Error("This node has no Claude session to compact.");
       }
-      const settings = await readSettings();
-      const binPath = claudeBinPathOf(settings);
-      const run = resolveClaudeRun({
-        nodeModel: args.model,
-        settingsModel: settings.providers?.claude?.model,
-        legacyModel: settings.claudeModel,
-        models: await claudeModels.modelsWithin(binPath, CLAUDE_MODEL_LIST_BUDGET_MS),
-      });
-      const result = await runCompaction({
-        executable: claudeExecutable(binPath),
-        sessionId: session.id,
-        fork: args.mode === "summaryNode",
-        focus: compactFocus(args.focus),
-        model: run.model,
-        cwd: typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : homedir(),
-      });
-      if (result.context) void modelWindows?.learn(result.context.model, result.context.window).catch(() => undefined);
-      return result;
+      // Tracked like a chat: Stop (chat:cancel / chat:cancelForNode), quitting, a closing tab and a
+      // lock takeover all see it and can stop it.
+      const chatId = typeof args.chatId === "string" && args.chatId.length > 0 ? args.chatId : `compact-${randomUUID()}`;
+      const controller = new AbortController();
+      activeChats.add(chatId, { controller, nodeId: args.nodeId, canvasId: args.canvasId, client });
+      try {
+        const settings = await readSettings();
+        const binPath = claudeBinPathOf(settings);
+        const run = resolveClaudeRun({
+          nodeModel: args.model,
+          settingsModel: settings.providers?.claude?.model,
+          legacyModel: settings.claudeModel,
+          models: await claudeModels.modelsWithin(binPath, CLAUDE_MODEL_LIST_BUDGET_MS, controller.signal),
+        });
+        const result = await runCompaction({
+          executable: claudeExecutable(binPath),
+          sessionId: session.id,
+          fork: args.mode === "summaryNode",
+          focus: compactFocus(args.focus),
+          model: run.model,
+          cwd: typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : homedir(),
+          signal: controller.signal,
+        });
+        if (result.context) void modelWindows?.learn(result.context.model, result.context.window).catch(() => undefined);
+        return result;
+      } finally {
+        activeChats.finish(chatId);
+      }
     },
     "shared",
   );
