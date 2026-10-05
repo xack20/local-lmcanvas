@@ -124,7 +124,14 @@ export function createWebService(deps: WebServiceDeps): WebService {
       if (serve.httpsInUse && !ours) return PROBLEMS.httpsTaken;
       if (deps.server.port() === null) {
         const busy = await listenOnPort();
-        if (busy) return busy;
+        if (busy) {
+          // Left in place, our mapping would publish whatever now listens on our port.
+          if (ours) {
+            published = info.host;
+            await removeOurMapping();
+          }
+          return busy;
+        }
         openedServer = true;
       }
       // Recorded before enableServe: a timeout can still mean it was applied.

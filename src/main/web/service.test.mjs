@@ -264,6 +264,23 @@ describe("createWebService", () => {
     expect(h.calls.find(([name]) => name === "disableServe")).toBeUndefined();
   });
 
+  test("our leftover mapping is removed when our port is taken, so it can't publish someone else's server", async () => {
+    const h = harness({ serve: { httpsInUse: true, proxiesTo: OURS }, portFree: false });
+    const status = await h.service.setEnabled(true);
+    expect(status).toMatchObject({ enabled: false, running: false });
+    expect(status.problem).toContain("Port 4317");
+    expect(h.calls).toEqual([["disableServe"]]);
+    expect(h.tsState.serve).toEqual({ httpsInUse: false, proxiesTo: null });
+  });
+
+  test("our leftover mapping is removed when the port is lost between check and bind", async () => {
+    const h = harness({ serve: { httpsInUse: true, proxiesTo: OURS } });
+    h.faults.listen = Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" });
+    const status = await h.service.setEnabled(true);
+    expect(status.problem).toContain("Port 4317");
+    expect(h.calls).toEqual([["listen", WEB_PORT], ["disableServe"]]);
+  });
+
   test("a failed operation does not block the ones queued after it", async () => {
     const h = harness();
     h.faults.write = new Error("disk full");
