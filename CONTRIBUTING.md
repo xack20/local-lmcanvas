@@ -17,6 +17,8 @@ bun install
 bun run dev
 ```
 
+This copy is the [xack20/local-lmcanvas](https://github.com/xack20/local-lmcanvas) fork. To work on it, clone the fork (its default branch is `local/model-labels`). The test, channel-scope and browser-adapter steps below apply to the fork only; upstream has none of those files.
+
 The Electron window opens automatically. DevTools opens with it in dev mode.
 
 ## Project layout
@@ -33,7 +35,13 @@ Run the typechecker:
 bun run typecheck
 ```
 
-That's the only required check today. There's no lint or test suite yet — adding those is a known follow-up but contributors don't need to set them up as part of their PR.
+Then run the unit tests (`*.test.mjs`, run with Bun), each file in its own `bun test` process; never pass several files to one `bun test` invocation. `settings.test.mjs` redirects `HOME` and refuses to run once another file has loaded the storage modules. This loop also picks up new, uncommitted test files:
+
+```bash
+for f in $(git ls-files --cached --others --exclude-standard '*.test.mjs'); do bun test "$f" >/dev/null 2>&1 && echo "PASS $f" || echo "FAIL $f"; done
+```
+
+Add tests next to the code you change, and keep them away from the real `~/.local-lmcanvas`. There's no lint script.
 
 Sanity-check your change in the app:
 
@@ -68,7 +76,15 @@ Keep subject lines under 72 characters. Multi-paragraph bodies are fine when the
 - No `@ts-ignore` / `@ts-expect-error` — if a type fight is unwinnable, raise it in the PR.
 - Minimal comments. Names should carry the meaning. Comments are for non-obvious *why*, not *what*.
 - Don't add error handling, fallbacks, or validation for cases that can't happen.
-- New IPC channels go through the typed handlers in `src/main/index.ts` and the surface in `src/preload/index.ts` — don't add ad-hoc channels.
+- New channels need four pieces, so don't add ad-hoc ones:
+  - a type in `src/shared/ipc.ts`;
+  - a handler registered with `api.handle(channel, handler, scope)` in `src/main/index.ts`;
+  - the surface in `src/preload/index.ts`;
+  - a matching entry in the browser adapter `src/renderer/src/lib/webBridge.ts`.
+- Channels are desktop-only by default. Mark one `"shared"` only if a paired browser may call it.
+- Exceptions:
+  - Browser-only helper channels (`chat:isActive`, `client:bye`) live only in `src/main/index.ts` and `webBridge.ts`.
+  - Main → renderer events (`chat:event`, `askUser:request`, `canvas:lockLost`) go out with `client.send(channel, payload)`. They need an `ipcRenderer.on` listener in the preload and a `subscribe()` in `webBridge.ts`.
 
 ## Reporting bugs and proposing features
 
