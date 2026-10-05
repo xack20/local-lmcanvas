@@ -96,7 +96,8 @@ export async function compactNode(
       at: Date.now(),
     });
   }
-  if (result.context) s.setNodeContext(args.nodeId, result.context);
+  // Without a new measurement the old size is stale: drop it so the badge shows an estimate.
+  s.setNodeContext(args.nodeId, result.context ?? undefined);
   settle();
   return { ok: true };
 }

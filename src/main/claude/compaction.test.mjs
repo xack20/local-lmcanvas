@@ -67,6 +67,15 @@ describe("runCompaction", () => {
     await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal })).rejects.toThrow(COMPACTION_STOPPED_MESSAGE);
   });
 
+  test("a stop that lands while the new size is being measured is still a stop", async () => {
+    const stop = new AbortController();
+    const queryFn = () => Object.assign((async function* () {
+      yield BOUNDARY;
+      yield RESULT;
+    })(), { getContextUsage: async () => { stop.abort(); return USAGE; } });
+    await expect(runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn, signal: stop.signal })).rejects.toThrow(COMPACTION_STOPPED_MESSAGE);
+  });
+
   test("in place resumes without forking", async () => {
     const { queryFn, seen } = fakeQuery([BOUNDARY, RESULT], { usage: USAGE });
     const out = await runCompaction({ sessionId: "s1", fork: false, cwd: "/tmp", queryFn });

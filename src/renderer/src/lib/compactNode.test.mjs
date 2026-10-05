@@ -133,4 +133,13 @@ describe("compactNode", () => {
     expect(store.getState().compactErrors[nodeId]).toBeUndefined();
     expect(store.getState().runningChats.size).toBe(0);
   });
+
+  test("in place without a new measurement drops the old size, so the badge estimates instead of showing it as exact", async () => {
+    const nodeId = setup();
+    await store.getState().loadCanvas(CANVAS_ID);
+    store.getState().setNodeContext(nodeId, { ...CONTEXT, tokens: 412_000 });
+    await compactNode({ store, compact: async () => ({ sessionId: "s1", before: 412_000, after: 38_000, summary: null, context: null }) }, { canvasId: CANVAS_ID, nodeId, mode: "inPlace" });
+    expect(store.getState().nodes[nodeId].data.context).toBeUndefined();
+  });
 });
+

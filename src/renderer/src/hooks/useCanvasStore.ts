@@ -1022,6 +1022,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       },
 
       clearMessages: (nodeId) => {
+        // A compaction is rewriting this node's session; clearing it now would lose the node.
+        if (get().compactingNodeIds[nodeId]) return;
         set((s) => {
           const node = s.nodes[nodeId];
           if (!node) return s;

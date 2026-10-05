@@ -75,7 +75,8 @@ function CustomNodeImpl(props: NodeProps) {
   const userMessage = messages.find((m) => m.role === "user");
   const assistantMessage = messages.find((m) => m.role === "assistant");
   const hasSubmitted = Boolean(userMessage);
-  const canEditPrompt = hasSubmitted;
+  // A prompt can't be edited (which clears the node) while a compaction rewrites its session.
+  const canEditPrompt = hasSubmitted && !compacting;
 
   const userText = userMessage
     ? userMessage.blocks

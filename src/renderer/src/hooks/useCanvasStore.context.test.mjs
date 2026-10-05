@@ -51,4 +51,17 @@ describe("context in the canvas store", () => {
     store.getState().setCompacting(nodeId, false);
     expect(store.getState().compactingNodeIds[nodeId]).toBeUndefined();
   });
+
+  test("a node that's compacting can't have its messages cleared (editing its prompt would wipe it)", async () => {
+    const { nodeId } = stubApi();
+    await store.getState().loadCanvas(CANVAS_ID);
+    store.getState().appendMessage(nodeId, { id: "u1", role: "user", createdAt: 1, blocks: [{ type: "text", text: "hi" }] });
+    store.getState().setCompacting(nodeId, true);
+    store.getState().clearMessages(nodeId);
+    expect(store.getState().nodes[nodeId].data.chat.messages.length).toBe(1);
+    store.getState().setCompacting(nodeId, false);
+    store.getState().clearMessages(nodeId);
+    expect(store.getState().nodes[nodeId].data.chat.messages.length).toBe(0);
+  });
 });
+

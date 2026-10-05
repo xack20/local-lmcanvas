@@ -94,6 +94,8 @@ export async function runCompaction(req: CompactionRequest): Promise<CompactResu
         }
         if (!compacted) throw new Error(compactError ?? "Claude Code didn't compact this session.");
         const context = await measureContext(session);
+        // Stop can land while the new size is being measured; the result must not be applied then.
+        if (req.signal?.aborted) throw new Error(COMPACTION_STOPPED_MESSAGE);
         const usage = normalizeUsage((msg as { usage?: unknown }).usage, {
           totalCostUsd: (msg as { total_cost_usd?: unknown }).total_cost_usd,
         });
