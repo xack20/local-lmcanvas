@@ -723,7 +723,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
-  if (activeWebService) {
+  // With browser access off there is nothing to tear down: quit exactly as before.
+  if (activeWebService?.needsShutdown()) {
     // A second quit while this shutdown is in flight finds no service and quits
     // at once: a deliberate escape hatch, at the cost of possibly skipping teardown.
     event.preventDefault();

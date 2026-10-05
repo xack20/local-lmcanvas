@@ -41,6 +41,8 @@ export type WebService = {
   createPairingLink(): PairingLink;
   removeDevice(deviceId: string): Promise<BrowserAccessStatus>;
   startIfEnabled(): Promise<void>;
+  /** True while quitting has to wait for shutdown(): something is live, published, held or in progress. */
+  needsShutdown(): boolean;
   shutdown(): Promise<void>;
   gateContext(): GateContext | null;
 };
@@ -60,8 +62,12 @@ export function createWebService(deps: WebServiceDeps): WebService {
   // interleave their awaits. The queue never holds a rejection, so a failed
   // operation doesn't block the ones after it.
   let queue: Promise<unknown> = Promise.resolve();
+  let inFlight = 0;
   const serialized = <T>(task: () => Promise<T>): Promise<T> => {
-    const run = queue.then(task);
+    inFlight += 1;
+    const run = queue.then(task).finally(() => {
+      inFlight -= 1;
+    });
     queue = run.catch(() => undefined);
     return run;
   };
@@ -215,6 +221,8 @@ export function createWebService(deps: WebServiceDeps): WebService {
         problem = await start();
         applyAwake(await keepAwakeSetting());
       }),
+    needsShutdown: () =>
+      inFlight > 0 || live !== null || published !== null || blockerId !== null || deps.server.port() !== null,
     shutdown: () => serialized(stop),
     gateContext() {
       if (!live) return null;

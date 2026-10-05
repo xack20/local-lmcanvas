@@ -14,6 +14,7 @@ function harness({ info, serve, portFree = true, keepAwake = true } = {}) {
   };
   const tailscale = {
     info: async () => {
+      if (faults.infoWait) await faults.infoWait;
       if (faults.info) throw faults.info;
       return tsState.info;
     },
@@ -279,6 +280,33 @@ describe("createWebService", () => {
     const status = await h.service.setEnabled(true);
     expect(status.problem).toContain("Port 4317");
     expect(h.calls).toEqual([["listen", WEB_PORT], ["disableServe"]]);
+  });
+
+  test("needs a shutdown on quit only while it has something to tear down", async () => {
+    const h = harness();
+    expect(h.service.needsShutdown()).toBe(false);
+    await h.service.setEnabled(true);
+    expect(h.service.needsShutdown()).toBe(true);
+    await h.service.setEnabled(false);
+    expect(h.service.needsShutdown()).toBe(false);
+  });
+
+  test("a start that found a problem leaves nothing to tear down", async () => {
+    const h = harness({ portFree: false });
+    await h.service.setEnabled(true);
+    expect(h.service.needsShutdown()).toBe(false);
+  });
+
+  test("a start still in progress needs a shutdown, so quitting can't orphan its mapping", async () => {
+    const h = harness();
+    let release;
+    h.faults.infoWait = new Promise((resolve) => (release = resolve));
+    const starting = h.service.setEnabled(true);
+    expect(h.service.needsShutdown()).toBe(true);
+    release();
+    await starting;
+    await h.service.shutdown();
+    expect(h.service.needsShutdown()).toBe(false);
   });
 
   test("a failed operation does not block the ones queued after it", async () => {
