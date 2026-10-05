@@ -47,4 +47,24 @@ describe("browser access settings", () => {
     await settings.writeSettings({ ...after, browserAccess: { enabled: false, keepAwake: false } });
     expect((await settings.readSettings()).browserAccess).toEqual({ enabled: true, keepAwake: true });
   });
+
+  test("concurrent writes never lose an update", async () => {
+    await settings.writeBrowserAccess({ enabled: false, keepAwake: true });
+    const result = await Promise.all([
+      settings.writeBrowserAccess({ enabled: true }),
+      settings.writeBrowserAccess({ keepAwake: false }),
+    ]);
+    expect((await settings.readSettings()).browserAccess).toEqual({ enabled: true, keepAwake: false });
+
+    // Also test overlapping writeSettings with writeBrowserAccess
+    await settings.writeBrowserAccess({ enabled: false, keepAwake: true });
+    const stale = await settings.readSettings();
+    await Promise.all([
+      settings.writeSettings({ ...stale, systemPrompt: "concurrent" }),
+      settings.writeBrowserAccess({ enabled: true }),
+    ]);
+    const final = await settings.readSettings();
+    expect(final.systemPrompt).toBe("concurrent");
+    expect(final.browserAccess.enabled).toBe(true);
+  });
 });

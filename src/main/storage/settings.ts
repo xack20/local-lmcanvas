@@ -12,6 +12,14 @@ import { SETTINGS_FILE, atomicWriteFile, ensureDirs } from "./paths";
 
 const MAX_RECENTS = 8;
 
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+function serialized<T>(task: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(task, task);
+  writeQueue = run.catch(() => undefined);
+  return run;
+}
+
 const DEFAULTS: AppSettings = {
   systemPrompt: "",
   claudeModel: "claude-fable-5",
@@ -124,20 +132,22 @@ export async function readSettings(): Promise<AppSettings> {
   }
 }
 
-export async function writeSettings(settings: AppSettings): Promise<AppSettings> {
-  const stored = await readSettings();
-  return persist({ ...settings, browserAccess: stored.browserAccess });
-}
-
-export async function writeBrowserAccess(
-  patch: Partial<BrowserAccessSettings>,
-): Promise<AppSettings> {
-  const stored = await readSettings();
-  return persist({
-    ...stored,
-    browserAccess: { ...sanitizeBrowserAccess(stored.browserAccess), ...patch },
+export const writeSettings = (settings: AppSettings): Promise<AppSettings> =>
+  serialized(async () => {
+    const stored = await readSettings();
+    return persist({ ...settings, browserAccess: stored.browserAccess });
   });
-}
+
+export const writeBrowserAccess = (
+  patch: Partial<BrowserAccessSettings>,
+): Promise<AppSettings> =>
+  serialized(async () => {
+    const stored = await readSettings();
+    return persist({
+      ...stored,
+      browserAccess: { ...sanitizeBrowserAccess(stored.browserAccess), ...patch },
+    });
+  });
 
 async function persist(settings: AppSettings): Promise<AppSettings> {
   await ensureDirs();
