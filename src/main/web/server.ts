@@ -64,8 +64,17 @@ function header(req: IncomingMessage, name: string): string | undefined {
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  const text = JSON.stringify(body);
   res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
+  res.end(text);
+}
+
+function decodePath(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 function sendText(res: ServerResponse, status: number, body: string, type = "text/plain; charset=utf-8"): void {
@@ -150,7 +159,8 @@ export function createWebServer(deps: WebServerDeps): WebServer {
   };
 
   const invoke = async (req: IncomingMessage, res: ServerResponse, url: URL, deviceId: string | null): Promise<void> => {
-    const channel = decodeURIComponent(url.pathname.slice("/api/".length));
+    const channel = decodePath(url.pathname.slice("/api/".length));
+    if (channel === null) return sendJson(res, 400, { ok: false, error: "Malformed request" });
     const clientId = header(req, CLIENT_HEADER) ?? "";
     if (!deviceId || !CLIENT_ID_PATTERN.test(clientId)) {
       return sendJson(res, 400, { ok: false, error: "Missing tab id" });
@@ -165,15 +175,16 @@ export function createWebServer(deps: WebServerDeps): WebServer {
     }
     if (!isArgsBody(body)) return sendJson(res, 400, { ok: false, error: "Malformed request" });
     const client = deps.clients.ensure(clientId, deviceId);
+    let result: unknown;
     try {
-      const result = await deps.registry.invoke(channel, client, body.args);
-      sendJson(res, 200, { ok: true, result: result ?? null });
+      result = await deps.registry.invoke(channel, client, body.args);
     } catch (error) {
       if (error instanceof ApiError) {
         return sendJson(res, error.code === "forbidden" ? 403 : 404, { ok: false, error: error.message });
       }
-      sendJson(res, 200, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      return sendJson(res, 200, { ok: false, error: error instanceof Error ? error.message : String(error) });
     }
+    sendJson(res, 200, { ok: true, result: result ?? null });
   };
 
   const listDirs = async (res: ServerResponse, url: URL): Promise<void> => {
@@ -195,7 +206,9 @@ export function createWebServer(deps: WebServerDeps): WebServer {
   };
 
   const serveStatic = async (res: ServerResponse, pathname: string): Promise<void> => {
-    const relative = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+    const decoded = pathname === "/" ? "/index.html" : decodePath(pathname);
+    if (decoded === null) return sendText(res, 400, "Bad request");
+    const relative = decoded.replace(/^\/+/, "");
     const filePath = resolve(staticRoot, relative);
     if (!filePath.startsWith(staticRoot + sep)) return sendText(res, 404, "Not found");
     try {
@@ -227,32 +240,48 @@ export function createWebServer(deps: WebServerDeps): WebServer {
   };
 
   const refuseUpgrade = (socket: Duplex, status: number): void => {
-    socket.write(`HTTP/1.1 ${status} Refused\r\nConnection: close\r\n\r\n`);
+    if (socket.destroyed) return;
+    socket.on("error", () => undefined);
+    try {
+      socket.write(`HTTP/1.1 ${status} Refused\r\nConnection: close\r\n\r\n`);
+    } catch (error) {
+      console.warn("[web] could not answer a refused connection:", error instanceof Error ? error.message : error);
+    }
     socket.destroy();
   };
 
   const upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname !== "/ws") return refuseUpgrade(socket, 404);
-    const auth = authorize(req, url.pathname, true);
-    if (!auth.ok) return refuseUpgrade(socket, auth.status);
-    const clientId = url.searchParams.get("client") ?? "";
-    if (!auth.deviceId || !CLIENT_ID_PATTERN.test(clientId)) return refuseUpgrade(socket, 400);
-    const deviceId = auth.deviceId;
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.on("error", (error) => {
-        console.warn("[web] live connection error:", error.message);
-        ws.terminate();
+    try {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname !== "/ws") return refuseUpgrade(socket, 404);
+      const auth = authorize(req, url.pathname, true);
+      if (!auth.ok) return refuseUpgrade(socket, auth.status);
+      const clientId = url.searchParams.get("client") ?? "";
+      if (!auth.deviceId || !CLIENT_ID_PATTERN.test(clientId)) return refuseUpgrade(socket, 400);
+      const deviceId = auth.deviceId;
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.on("error", (error) => {
+          console.warn("[web] live connection error:", error.message);
+          ws.terminate();
+        });
+        const tracked: SocketLike = { send: (data) => ws.send(data), close: () => ws.close() };
+        sockets.set(ws, deviceId);
+        ws.on("close", () => {
+          sockets.delete(ws);
+          deps.clients.detach(clientId, tracked);
+        });
+        try {
+          const { resumed } = deps.clients.attach(clientId, deviceId, tracked);
+          ws.send(JSON.stringify({ type: "welcome", resumed }));
+        } catch (error) {
+          console.warn("[web] live connection setup failed:", error instanceof Error ? error.message : error);
+          ws.terminate();
+        }
       });
-      const tracked: SocketLike = { send: (data) => ws.send(data), close: () => ws.close() };
-      sockets.set(ws, deviceId);
-      const { resumed } = deps.clients.attach(clientId, deviceId, tracked);
-      ws.send(JSON.stringify({ type: "welcome", resumed }));
-      ws.on("close", () => {
-        sockets.delete(ws);
-        deps.clients.detach(clientId, tracked);
-      });
-    });
+    } catch (error) {
+      console.warn("[web] refused live connection:", error instanceof Error ? error.message : error);
+      refuseUpgrade(socket, 400);
+    }
   };
 
   return {
@@ -261,12 +290,15 @@ export function createWebServer(deps: WebServerDeps): WebServer {
         const created = createServer((req, res) => {
           handle(req, res).catch((error: unknown) => {
             console.error("[web] request failed:", error);
-            if (!res.headersSent) sendText(res, 500, "Internal error");
+            if (res.headersSent) res.destroy();
+            else sendText(res, 500, "Internal error");
           });
         });
         created.on("upgrade", upgrade);
-        created.once("error", reject);
+        created.on("error", reject);
         created.listen(port, "127.0.0.1", () => {
+          created.off("error", reject);
+          created.on("error", (error) => console.error("[web] server error:", error));
           server = created;
           resolveListen();
         });

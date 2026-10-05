@@ -1,6 +1,6 @@
 // .mjs keeps the bun:test import out of `bun run typecheck`.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
@@ -47,6 +47,69 @@ const apiCall = (channel, args, extra = {}) =>
     body: JSON.stringify({ args }),
   });
 
+const upgradeRequest = (target, headers) =>
+  [
+    `GET ${target} HTTP/1.1`,
+    ...Object.entries({
+      Connection: "Upgrade",
+      Upgrade: "websocket",
+      "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+      ...headers,
+    }).map(([name, value]) => `${name}: ${value}`),
+    "",
+    "",
+  ].join("\r\n");
+
+// Sends a raw upgrade request and resolves with the response text once the server closes the socket
+// (or after waitMs, with closedByServer false).
+function rawUpgrade({ target, headers, targetPort = port, waitMs = 1000 }) {
+  return new Promise((resolve) => {
+    const socket = connect(targetPort, "127.0.0.1");
+    let text = "";
+    let done = false;
+    const finish = (closedByServer) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve({ text, closedByServer });
+    };
+    const timer = setTimeout(() => finish(false), waitMs);
+    socket.on("data", (chunk) => (text += chunk.toString("latin1")));
+    socket.on("error", () => {});
+    socket.on("close", () => finish(true));
+    socket.write(upgradeRequest(target, headers));
+  });
+}
+
+async function startIsolatedServer({ clients: isolatedClients, write, now }) {
+  const dir = mkdtempSync(join(tmpdir(), "lmc-isolated-"));
+  mkdirSync(join(dir, "renderer"));
+  writeFileSync(join(dir, "renderer", "index.html"), "<!doctype html><title>app</title>");
+  const store = await loadDeviceStore(join(dir, "devices.json"), write);
+  const isolated = createWebServer({
+    registry: createApiRegistry(),
+    clients: isolatedClients,
+    devices: store,
+    gateContext: () => ({ expectedHost: HOST, ownerLogin: OWNER, isPairedDevice: (k) => store.findByKey(k) !== undefined }),
+    staticRoot: join(dir, "renderer"),
+    homeDir: dir,
+    now,
+  });
+  await isolated.listen(0);
+  const { token } = store.createPairingToken(Date.now());
+  const pairing = await call({ path: `/pair?token=${token}`, headers: trusted(), targetPort: isolated.port() });
+  return {
+    port: isolated.port(),
+    cookie: pairing.headers["set-cookie"][0].split(";")[0],
+    close: async () => {
+      await isolated.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "lmc-server-"));
   const staticRoot = join(root, "renderer");
@@ -68,6 +131,7 @@ beforeAll(async () => {
     },
     "shared",
   );
+  registry.handle("big", async () => 10n, "shared");
   registry.handle("web:createPairingLink", async () => ++ranSecret, "desktop-only");
 
   server = createWebServer({
@@ -123,7 +187,18 @@ describe("static files", () => {
   });
 
   test("never serves files outside the app folder", async () => {
-    expect((await call({ path: "/%2e%2e/%2e%2e/devices.json", headers: paired() })).status).toBe(404);
+    const outside = join(root, "devices.json");
+    expect(existsSync(outside)).toBe(true);
+    expect(readFileSync(outside, "utf-8")).toContain("keyHash");
+    for (const path of ["/..%2fdevices.json", "/assets/..%2f..%2fdevices.json"]) {
+      const res = await call({ path, headers: paired() });
+      expect(res.status).toBe(404);
+      expect(res.text).not.toContain("keyHash");
+    }
+  });
+
+  test("a malformed percent-escape in the path is a 400, not a crash", async () => {
+    expect((await call({ path: "/%E0%A4%A", headers: paired() })).status).toBe(400);
   });
 });
 
@@ -160,6 +235,30 @@ describe("API calls", () => {
     const tooLarge = await apiCall("echo", ["x".repeat(2048)]);
     expect(tooLarge.status).toBe(413);
     expect((await apiCall("echo", [2])).status).toBe(200);
+  });
+
+  test("a result that cannot be serialised is a 500 and does not hang the request", async () => {
+    const errors = [];
+    const originalError = console.error;
+    console.error = (...args) => errors.push(args.join(" "));
+    try {
+      expect((await apiCall("big", [])).status).toBe(500);
+    } finally {
+      console.error = originalError;
+    }
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("[web] request failed:");
+    expect((await apiCall("echo", [3])).status).toBe(200);
+  });
+
+  test("a malformed percent-escape in the channel is a 400, not a crash", async () => {
+    const res = await call({
+      method: "POST",
+      path: "/api/%E0%A4%A",
+      headers: paired({ Origin: ORIGIN, "X-LMC-Client": "tab12345", "Content-Type": "application/json" }),
+      body: JSON.stringify({ args: [] }),
+    });
+    expect(res.status).toBe(400);
   });
 
   test("requires a tab id", async () => {
@@ -219,19 +318,7 @@ describe("live connection", () => {
   });
 
   test("a malformed frame disconnects that tab and the server keeps serving", async () => {
-    const upgradeHeaders = paired({
-      Origin: ORIGIN,
-      Connection: "Upgrade",
-      Upgrade: "websocket",
-      "Sec-WebSocket-Version": "13",
-      "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-    });
-    const request = [
-      "GET /ws?client=tabws003 HTTP/1.1",
-      ...Object.entries(upgradeHeaders).map(([name, value]) => `${name}: ${value}`),
-      "",
-      "",
-    ].join("\r\n");
+    const request = upgradeRequest("/ws?client=tabws003", paired({ Origin: ORIGIN }));
     const socket = connect(port, "127.0.0.1");
     socket.on("error", () => {});
     const closed = new Promise((r) => socket.on("close", r));
@@ -243,41 +330,51 @@ describe("live connection", () => {
   });
 });
 
+describe("live connection refusals", () => {
+  const target = "/ws?client=tabref001";
+
+  test("refuses a device that has no pairing cookie", async () => {
+    const res = await rawUpgrade({ target, headers: trusted({ Origin: ORIGIN }) });
+    expect(res.text.startsWith("HTTP/1.1 401")).toBe(true);
+    expect(res.closedByServer).toBe(true);
+    expect(clients.get("tabref001")).toBeUndefined();
+  });
+
+  test("refuses a page from another site", async () => {
+    const res = await rawUpgrade({ target, headers: paired({ Origin: "https://evil.example" }) });
+    expect(res.text.startsWith("HTTP/1.1 403")).toBe(true);
+    expect(res.closedByServer).toBe(true);
+    expect(clients.get("tabref001")).toBeUndefined();
+  });
+
+  test("answers an absolute-form request target with a 400 and keeps serving", async () => {
+    for (const absolute of ["http://a:99999/ws", "http://["]) {
+      const res = await rawUpgrade({ target: absolute, headers: paired({ Origin: ORIGIN }) });
+      expect(res.text.startsWith("HTTP/1.1 400")).toBe(true);
+      expect(res.closedByServer).toBe(true);
+    }
+    expect((await call({ path: "/", headers: paired() })).status).toBe(200);
+  });
+});
+
 describe("device activity bookkeeping", () => {
-  let activityRoot;
-  let activityServer;
-  let activityCookie;
+  let isolated;
   let failWrites = false;
   let clock = Date.now();
 
   beforeAll(async () => {
-    activityRoot = mkdtempSync(join(tmpdir(), "lmc-activity-"));
-    mkdirSync(join(activityRoot, "renderer"));
-    writeFileSync(join(activityRoot, "renderer", "index.html"), "<!doctype html><title>app</title>");
-    const store = await loadDeviceStore(join(activityRoot, "devices.json"), async (path, contents) => {
-      if (failWrites) throw new Error("disk full");
-      await writeFile(path, contents);
-    });
-    activityServer = createWebServer({
-      registry: createApiRegistry(),
+    isolated = await startIsolatedServer({
       clients: createBrowserClientRegistry({ graceMs: 60_000 }),
-      devices: store,
-      gateContext: () => ({ expectedHost: HOST, ownerLogin: OWNER, isPairedDevice: (k) => store.findByKey(k) !== undefined }),
-      staticRoot: join(activityRoot, "renderer"),
-      homeDir: activityRoot,
+      write: async (path, contents) => {
+        if (failWrites) throw new Error("disk full");
+        await writeFile(path, contents);
+      },
       now: () => clock,
     });
-    await activityServer.listen(0);
-    const { token } = store.createPairingToken(Date.now());
-    const pairing = await call({ path: `/pair?token=${token}`, headers: trusted(), targetPort: activityServer.port() });
-    activityCookie = pairing.headers["set-cookie"][0].split(";")[0];
     clock += 2 * 60 * 1000;
   });
 
-  afterAll(async () => {
-    await activityServer.close();
-    rmSync(activityRoot, { recursive: true, force: true });
-  });
+  afterAll(() => isolated.close());
 
   test("a failed last-seen write is logged and the request still succeeds", async () => {
     failWrites = true;
@@ -285,12 +382,40 @@ describe("device activity bookkeeping", () => {
     const originalWarn = console.warn;
     console.warn = (...args) => warnings.push(args.join(" "));
     try {
-      const res = await call({ path: "/", headers: trusted({ Cookie: activityCookie }), targetPort: activityServer.port() });
+      const res = await call({ path: "/", headers: trusted({ Cookie: isolated.cookie }), targetPort: isolated.port });
       await new Promise((r) => setTimeout(r, 50));
       expect(res.status).toBe(200);
       expect(warnings).toEqual(["[web] couldn't record device activity: Error: disk full"]);
     } finally {
       console.warn = originalWarn;
     }
+  });
+});
+
+describe("a live connection that fails to register", () => {
+  let isolated;
+
+  beforeAll(async () => {
+    isolated = await startIsolatedServer({
+      clients: createBrowserClientRegistry({
+        graceMs: 60_000,
+        onCreated: () => {
+          throw new Error("registry unavailable");
+        },
+      }),
+    });
+  });
+
+  afterAll(() => isolated.close());
+
+  test("is closed and the server keeps serving", async () => {
+    const res = await rawUpgrade({
+      target: "/ws?client=tabfail01",
+      headers: trusted({ Cookie: isolated.cookie, Origin: ORIGIN }),
+      targetPort: isolated.port,
+    });
+    expect(res.closedByServer).toBe(true);
+    const page = await call({ path: "/", headers: trusted({ Cookie: isolated.cookie }), targetPort: isolated.port });
+    expect(page.status).toBe(200);
   });
 });
