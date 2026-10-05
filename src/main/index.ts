@@ -15,6 +15,9 @@ import { buildPromptWithHistory } from "./claude/history";
 import { createClaudeModelCatalog } from "./claude/models";
 import { loadModelWindows, type ModelWindows } from "./claude/modelWindows";
 import { compactFocus, runCompaction } from "./claude/compaction";
+import { estimateTokens, fittedPrompt, planReplay, trimToFit } from "./claude/replayFit";
+import { summarizeForReplay } from "./claude/replaySummary";
+import { DEFAULT_SETUP_TOKENS, DEFAULT_WINDOW } from "@shared/contextSize";
 import { claudeExecutable } from "./claude/runner";
 import { claudeEffortFor, claudeModelArg, resolveClaudeRun } from "@shared/claudeModels";
 import { runAgent, type RunnerEvent } from "./agents";
@@ -385,7 +388,7 @@ function registerIpc(): void {
       parentSession?.provider === provider ? parentSession : undefined;
     const compatibleCurrentSession =
       currentSession?.provider === provider ? currentSession : undefined;
-    const agentPrompt =
+    let agentPrompt =
       compatibleCurrentSession || compatibleParentSession ? prompt : combinedPrompt;
 
     // Effective cwd: node override → canvas → user home (least-invasive fallback so
@@ -573,6 +576,42 @@ function registerIpc(): void {
           : undefined;
       const model = claudeRun ? claudeRun.model : providerCfg?.model;
       const runModel = claudeRun?.resolvedModel ?? model;
+
+      // Never fail on replay: a branch replayed without a Claude session is fitted to the window.
+      if (provider === "claude" && !compatibleCurrentSession && !compatibleParentSession) {
+        const window = modelWindows?.windowFor(claudeRun?.resolvedModel) ?? DEFAULT_WINDOW;
+        const plan = planReplay({ history, newPrompt: prompt, window, setupTokens: DEFAULT_SETUP_TOKENS });
+        if (!plan.fits) {
+          send({ chatId, type: "compacting", active: true });
+          try {
+            const summary = await summarizeForReplay(plan.olderText, {
+              executable: claudeExecutable(binPath),
+              model: claudeRun?.model,
+              cwd: effectiveCwd,
+              window,
+              signal: controller.signal,
+            });
+            agentPrompt = fittedPrompt(summary, plan.recent, prompt);
+            send({
+              chatId,
+              type: "compacted",
+              trigger: "replay",
+              method: "summary",
+              before: plan.estimate,
+              after: estimateTokens(agentPrompt) + DEFAULT_SETUP_TOKENS,
+            });
+          } catch (error) {
+            if (controller.signal.aborted) {
+              // Stopped while summarizing: the run below ends as any stopped chat does.
+              send({ chatId, type: "compacting", active: false });
+            } else {
+              console.warn("[context] replay summary failed; trimming instead:", error);
+              agentPrompt = trimToFit(history, prompt, plan.budget);
+              send({ chatId, type: "compacted", trigger: "replay", method: "trimmed", before: null, after: null });
+            }
+          }
+        }
+      }
       const policyRefused = await runAttempt(
         model,
         claudeRun ? claudeRun.reasoningEffort : requestedEffort,
