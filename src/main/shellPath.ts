@@ -18,11 +18,15 @@ export async function getShellPath(): Promise<string> {
   return pending;
 }
 
+// Windows GUI apps already get the full user PATH, and a second `PATH` key next to
+// Windows' own `Path` would leave the child with two conflicting values.
 export async function shellEnv(): Promise<NodeJS.ProcessEnv> {
+  if (process.platform === "win32") return { ...process.env };
   return { ...process.env, PATH: await getShellPath() };
 }
 
 function resolveShellPath(): Promise<string> {
+  if (process.platform === "win32") return Promise.resolve(process.env.PATH ?? "");
   return new Promise((resolve) => {
     const shell = process.env.SHELL || "/bin/zsh";
     let out = "";

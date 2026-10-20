@@ -126,6 +126,7 @@ beforeAll(async () => {
   mkdirSync(join(staticRoot, "assets"), { recursive: true });
   writeFileSync(join(staticRoot, "index.html"), "<!doctype html><title>app</title>");
   writeFileSync(join(staticRoot, "assets", "app.js"), "console.log(1)");
+  writeFileSync(join(staticRoot, "manifest.webmanifest"), '{"name":"LMCanvas"}');
   const home = join(root, "home");
   mkdirSync(join(home, "projects"), { recursive: true });
   mkdirSync(join(home, ".hidden"), { recursive: true });
@@ -197,7 +198,7 @@ describe("web server gate", () => {
     const first = await redeem(token);
     expect(first.status).toBe(303);
     expect(first.headers.location).toBe("/");
-    expect(first.headers["set-cookie"][0]).toContain("HttpOnly; Secure; SameSite=Strict; Path=/");
+    expect(first.headers["set-cookie"][0]).toContain("HttpOnly; Secure; SameSite=Lax; Path=/");
     const second = await redeem(token);
     expect(second.status).toBe(410);
     expect(second.text).toContain("expired or was already used");
@@ -250,6 +251,17 @@ describe("static files", () => {
     expect(page.text).toContain("<title>app</title>");
     const js = await call({ path: "/assets/app.js", headers: paired() });
     expect(js.headers["content-type"]).toContain("text/javascript");
+    expect(js.headers["cache-control"]).toContain("immutable");
+  });
+
+  test("serves the install manifest only to a paired device, revalidated rather than cached forever", async () => {
+    const manifest = await call({ path: "/manifest.webmanifest", headers: paired() });
+    expect(manifest.status).toBe(200);
+    expect(manifest.headers["content-type"]).toBe("application/manifest+json");
+    expect(manifest.headers["cache-control"]).toBe("no-cache");
+    const unpaired = await call({ path: "/manifest.webmanifest", headers: trusted() });
+    expect(unpaired.status).toBe(401);
+    expect(unpaired.text).not.toContain("LMCanvas\"}");
   });
 
   test("never serves files outside the app folder", async () => {

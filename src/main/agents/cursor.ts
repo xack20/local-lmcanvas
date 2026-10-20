@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { consumeJsonl } from "./jsonlReader";
 import { shellEnv } from "../shellPath";
+import { resolveCommandLine } from "../commandLine";
 import { normalizeUsage } from "./usage";
 import {
   composePromptWithSystem,
@@ -72,10 +73,13 @@ export async function runCursor(prompt: string, opts: RunAgentOpts): Promise<voi
   };
 
   const env = await shellEnv();
-  const proc = spawn(bin, args, {
+  const line = resolveCommandLine(bin, args, env);
+  const proc = spawn(line.command, line.args, {
     cwd: opts.cwd,
     stdio: ["ignore", "pipe", "pipe"],
     env,
+    windowsHide: true,
+    windowsVerbatimArguments: line.windowsVerbatimArguments,
   });
 
   if (opts.signal) {

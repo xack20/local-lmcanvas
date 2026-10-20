@@ -59,7 +59,7 @@ Long Claude conversations no longer run blind. [How it works](#context-window).
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (`claude` binary in `$PATH`)
 - [Bun](https://bun.sh) 1.1+ (this fork is tested with 1.4)
 - [Node.js](https://nodejs.org) 20+ on your `PATH`: the dev and build tools run under Node
-- macOS / Linux / Windows
+- macOS / Linux / Windows (see [Install on Windows](#install-on-windows))
 - For browser access only: a Mac with the [Tailscale app](https://tailscale.com/download/mac) installed at `/Applications/Tailscale.app` and signed in, plus Tailscale signed in to the same account on the other computer.
 - Optional: the Codex CLI, for the Codex provider (`codex` on your `PATH`, or its path in Settings → **advanced** → **codex** → **binary path**) and for `codex:smoke` (`codex` on your `PATH`, or set `CODEX_BIN`).
 
@@ -139,6 +139,45 @@ git fetch upstream && git merge upstream/main                                # o
 
 Then rebuild. `upstream/main` is the release line this fork is based on.
 
+## Install on Windows
+
+LMCanvas installs on Windows 10 and 11 (x64) with a normal setup program.
+
+### 1. Install Claude Code first
+
+LMCanvas drives the `claude` CLI, so install that first. In PowerShell:
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+claude          # sign in once, then exit
+```
+
+This puts `claude.exe` in `%USERPROFILE%\.local\bin`, on your `PATH`. On Windows LMCanvas only runs a real `claude.exe`: an npm-installed `claude.cmd` can't be started by the Agent SDK, so LMCanvas skips it and uses the older bundled CLI instead. Codex and Cursor installed with npm (`codex.cmd`) work.
+
+### 2. Get the installer
+
+Either:
+
+- **Download it.** Open the repo's **Actions** tab → **Windows installer** → the latest run → **Artifacts** → `LMCanvas-Windows-Setup`. Tagged releases (`v*`) also attach it to the GitHub release.
+- **Build it yourself** on a Windows PC with [Bun](https://bun.sh) and [Node.js](https://nodejs.org) 20+:
+
+  ```powershell
+  bun install
+  bun run dist:win
+  ```
+
+  The installer lands in `dist\LMCanvas-Setup-<version>-x64.exe`. Build on Windows: a build from macOS or Linux misses the Windows `claude.exe` that the Agent SDK bundles, unless you install it first (`npm install --no-save --os=win32 --cpu=x64 @anthropic-ai/claude-agent-sdk-win32-x64@<sdk version>`).
+
+### 3. Run the installer
+
+Double-click `LMCanvas-Setup-<version>-x64.exe`. The installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC". Click **More info** → **Run anyway**. It installs for your user only (no admin needed), lets you pick the folder, and adds Start menu and desktop shortcuts. Uninstall it from **Settings → Apps**. Your canvases stay in `%USERPROFILE%\.local-lmcanvas`.
+
+### What works differently on Windows
+
+- The window has the normal Windows title bar. Press **Alt** to show the menu bar.
+- **Sign in** opens a Command Prompt window that runs `<provider> login`.
+- Browser access needs Tailscale at `C:\Program Files\Tailscale\tailscale.exe`. It is built and tested for macOS; on Windows it is untested.
+
 ## Browser access
 
 ### Turn it on
@@ -168,7 +207,7 @@ Then rebuild. `upstream/main` is the release line this fork is based on.
 - **Every request is checked.** It must:
   - carry the Mac's `.ts.net` name as its Host. The server listens on `127.0.0.1` only, so it's reachable only through Tailscale Serve or from programs on the Mac itself;
   - come from the Tailscale account that owns the Mac;
-  - come from a paired browser, identified by an `HttpOnly; Secure; SameSite=Strict` device cookie that lasts a year;
+  - come from a paired browser, identified by an `HttpOnly; Secure; SameSite=Lax` device cookie that lasts a year. It's Lax so the installed app still sends it when opened from a home screen; the `Origin` check below is what guards changes;
   - send an `Origin` of exactly `https://<your-mac>.<your-tailnet>.ts.net` on every non-GET request and on the live WebSocket connection.
 - **Refused requests learn little.** An unpaired browser on your own account sees "This device isn't paired yet"; anything else gets a plain "Forbidden". Refusals are logged with the method, path and reason only. Pages can't be embedded in other sites.
 - **Only hashes are stored.** The Mac stores hashes of device keys and pairing tokens, never the keys themselves.

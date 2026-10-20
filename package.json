@@ -25,6 +25,7 @@
     "codex:protocol-check": "node scripts/check-codex-protocol.mjs",
     "pack": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder --publish never",
+    "dist:win": "electron-vite build && electron-builder --win --x64 --publish never",
     "release:start": "./scripts/release-background.sh start",
     "release:status": "./scripts/release-background.sh status",
     "release:logs": "./scripts/release-background.sh logs"
@@ -95,7 +96,33 @@
       "notarize": true
     },
     "win": {
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "files": [
+        "!node_modules/@anthropic-ai/claude-agent-sdk-{linux,darwin}-*/**"
+      ],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
+      "publish": {
+        "provider": "github",
+        "owner": "xack20",
+        "repo": "local-lmcanvas"
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LMCanvas",
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
       "icon": "build/icon.png"

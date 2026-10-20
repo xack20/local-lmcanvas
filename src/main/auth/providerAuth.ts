@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import type { Provider } from "@shared/types";
 import type { ProviderAuthStatus } from "@shared/ipc";
 import { shellEnv } from "../shellPath";
+import { resolveCommandLine } from "../commandLine";
 
 const DEFAULT_BIN: Record<Provider, string> = {
   claude: "claude",
@@ -27,7 +28,13 @@ async function probe(bin: string, args: string[]): Promise<ProbeResult> {
     let settled = false;
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env });
+      const line = resolveCommandLine(bin, args, env);
+      proc = spawn(line.command, line.args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env,
+        windowsHide: true,
+        windowsVerbatimArguments: line.windowsVerbatimArguments,
+      });
     } catch (err) {
       resolve({
         code: null,
@@ -181,13 +188,17 @@ export async function openLoginTerminal(
   provider: Provider,
   binPath?: string
 ): Promise<void> {
+  const bin = binPath || DEFAULT_BIN[provider];
+  if (process.platform === "win32") {
+    await openWindowsLoginConsole(bin);
+    return;
+  }
   if (process.platform !== "darwin") {
     console.warn(
       `[lmcanvas] openLoginTerminal: unsupported platform ${process.platform}`
     );
-    throw new Error(`openLoginTerminal is only supported on macOS for MVP.`);
+    throw new Error(`Signing in from LMCanvas isn't supported on ${process.platform}. Run "${bin} login" in a terminal.`);
   }
-  const bin = binPath || DEFAULT_BIN[provider];
   // escape double quotes for the embedded AppleScript string
   const cmd = `${bin} login`.replace(/"/g, '\\"');
   const script = `tell application "Terminal" to do script "${cmd}"`;
@@ -198,6 +209,23 @@ export async function openLoginTerminal(
     proc.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`osascript exited with code ${code}`));
+    });
+  });
+}
+
+async function openWindowsLoginConsole(bin: string): Promise<void> {
+  const env = await shellEnv();
+  const quotedBin = `"${bin.replace(/"/g, "")}"`;
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(
+      env.ComSpec || "cmd.exe",
+      ["/d", "/c", "start", '"LMCanvas sign-in"', "cmd.exe", "/k", `"${quotedBin} login"`],
+      { stdio: "ignore", env, windowsVerbatimArguments: true, windowsHide: true },
+    );
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`cmd.exe exited with code ${code}`));
     });
   });
 }

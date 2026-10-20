@@ -8,6 +8,7 @@ import type {
 } from "@shared/types";
 import { REASONING_EFFORTS } from "@shared/types";
 import { shellEnv } from "../shellPath";
+import { resolveCommandLine } from "../commandLine";
 import {
   isJsonObject,
   isJsonRpcId,
@@ -150,9 +151,12 @@ export class CodexAppServerClient {
 
   private static async start(bin: string): Promise<CodexAppServerClient> {
     const env = await shellEnv();
-    const proc = spawn(bin, ["app-server", "--stdio"], {
+    const line = resolveCommandLine(bin, ["app-server", "--stdio"], env);
+    const proc = spawn(line.command, line.args, {
       stdio: ["pipe", "pipe", "pipe"],
       env,
+      windowsHide: true,
+      windowsVerbatimArguments: line.windowsVerbatimArguments,
     });
     const client = new CodexAppServerClient(bin, proc);
     liveClients.add(client);

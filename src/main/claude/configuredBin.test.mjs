@@ -54,4 +54,25 @@ describe("findExecutable", () => {
   test("returns undefined when PATH is unset", () => {
     expect(findExecutable("claude", undefined)).toBeUndefined();
   });
+
+  test("on Windows, tries PATHEXT extensions and ignores extensionless files", () => {
+    writeFileSync(join(otherDir, "codex.cmd"), "");
+    writeFileSync(join(otherDir, "codex"), "");
+    const found = findExecutable("codex", [binDir, otherDir].join(";"), {
+      platform: "win32",
+      extensions: [".exe", ".cmd"],
+    });
+    expect(found).toBe(join(otherDir, "codex.cmd"));
+  });
+
+  test("on Windows, an extension filter skips shims that can't be spawned", () => {
+    writeFileSync(join(otherDir, "claude.cmd"), "");
+    expect(
+      findExecutable("claude", otherDir, { platform: "win32", extensions: [".exe"] }),
+    ).toBeUndefined();
+    writeFileSync(join(binDir, "claude.exe"), "");
+    expect(
+      findExecutable("claude", [otherDir, binDir].join(";"), { platform: "win32", extensions: [".exe"] }),
+    ).toBe(join(binDir, "claude.exe"));
+  });
 });

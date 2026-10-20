@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -86,7 +86,8 @@ export function stopPersistentProcess(id: string): PersistentProcessStopResult {
 
   try {
     if (process.platform === "win32") {
-      process.kill(entry.pid, "SIGTERM");
+      // The pid is the cmd.exe that `shell: true` started; /T takes its children with it.
+      spawnSync("taskkill", ["/pid", String(entry.pid), "/T", "/F"], { windowsHide: true });
     } else {
       process.kill(-entry.pid, "SIGTERM");
     }

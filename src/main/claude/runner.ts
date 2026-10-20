@@ -79,8 +79,10 @@ console.log("[lmcanvas] CLAUDE_BIN_PATH =", CLAUDE_BIN_PATH);
 
 // Prefer the user's own claude (Settings → binary path, default "claude" on PATH):
 // the SDK-bundled binary lags behind and rejects newer models.
+// On Windows only a real .exe works: the SDK spawns without a shell, so npm's claude.cmd can't run.
 export function claudeExecutable(binPath: string | undefined): string | undefined {
-  return findExecutable(binPath, process.env.PATH) ?? CLAUDE_BIN_PATH;
+  const options = process.platform === "win32" ? { extensions: [".exe"] } : {};
+  return findExecutable(binPath, pathFromEnv(process.env), options) ?? CLAUDE_BIN_PATH;
 }
 import type {
   BetaContentBlock,
@@ -101,7 +103,7 @@ import type { Client } from "../api/client";
 import type { Attachment } from "@shared/ipc";
 import { isClaudeEffort, type ProviderSessionRef, type ReasoningEffort, type UsageSummary } from "@shared/types";
 import { buildAskUserServer } from "./askUserMcp";
-import { findExecutable } from "./configuredBin";
+import { findExecutable, pathFromEnv } from "./configuredBin";
 import {
   isAuthError,
   isPolicyRefusal,

@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
 
-export const TAILSCALE_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+export const TAILSCALE_CLI =
+  process.platform === "win32"
+    ? `${process.env.ProgramFiles || "C:\\Program Files"}\\Tailscale\\tailscale.exe`
+    : "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 const EXEC_TIMEOUT_MS = 15_000;
 
 export type TailscaleInfo = {

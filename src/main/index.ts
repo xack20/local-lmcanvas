@@ -82,7 +82,11 @@ function createWindow(hash?: string): BrowserWindow {
     minWidth: 360,
     minHeight: 480,
     title: "LMCanvas",
-    titleBarStyle: "hiddenInset",
+    // macOS keeps its traffic lights over the content; elsewhere a hidden title bar
+    // would leave the window with no minimize/maximize/close buttons.
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" as const }
+      : { autoHideMenuBar: true }),
     backgroundColor: "#fafafa",
     icon: icon.isEmpty() ? undefined : icon,
     webPreferences: {

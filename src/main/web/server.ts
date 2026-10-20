@@ -35,6 +35,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
   ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
 };
 
 // No page of ours is ever meant to be inside a frame.
@@ -260,9 +261,11 @@ export function createWebServer(deps: WebServerDeps): WebServer {
     const token = new URLSearchParams(body).get("token") ?? "";
     const redeemed = await deps.devices.redeemPairingToken(token, deviceLabel(header(req, "user-agent")), now());
     if (!redeemed) return sendHtml(res, 410, EXPIRED_PAIR_PAGE);
+    // Lax, not Strict: launching the installed app from a home screen counts as a cross-site
+    // navigation, which drops a Strict cookie. State-changing requests are still Origin-checked.
     res.writeHead(303, {
       Location: "/",
-      "Set-Cookie": `${DEVICE_COOKIE}=${redeemed.deviceKey}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}`,
+      "Set-Cookie": `${DEVICE_COOKIE}=${redeemed.deviceKey}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${COOKIE_MAX_AGE_S}`,
     });
     res.end();
   };
@@ -324,9 +327,11 @@ export function createWebServer(deps: WebServerDeps): WebServer {
       const body = await readFile(filePath);
       const isIndex = filePath.endsWith("index.html");
       const isHtml = extname(filePath) === ".html";
+      // Only Vite's hashed build output can be cached forever; the manifest and icons keep their names.
+      const isHashed = relative.startsWith("assets/");
       res.writeHead(200, {
         "Content-Type": CONTENT_TYPES[extname(filePath)] ?? "application/octet-stream",
-        "Cache-Control": isIndex ? "no-store" : "public, max-age=31536000, immutable",
+        "Cache-Control": isIndex ? "no-store" : isHashed ? "public, max-age=31536000, immutable" : "no-cache",
         ...(isHtml ? { "Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "DENY" } : {}),
       });
       res.end(body);
