@@ -207,7 +207,7 @@ Double-click `LMCanvas-Setup-<version>-x64.exe`. The installer isn't code-signed
 - **Every request is checked.** It must:
   - carry the Mac's `.ts.net` name as its Host. The server listens on `127.0.0.1` only, so it's reachable only through Tailscale Serve or from programs on the Mac itself;
   - come from the Tailscale account that owns the Mac;
-  - come from a paired browser, identified by an `HttpOnly; Secure; SameSite=Strict` device cookie that lasts a year;
+  - come from a paired browser, identified by an `HttpOnly; Secure; SameSite=Lax` device cookie that lasts a year. It's Lax so the installed app still sends it when opened from a home screen; the `Origin` check below is what guards changes;
   - send an `Origin` of exactly `https://<your-mac>.<your-tailnet>.ts.net` on every non-GET request and on the live WebSocket connection.
 - **Refused requests learn little.** An unpaired browser on your own account sees "This device isn't paired yet"; anything else gets a plain "Forbidden". Refusals are logged with the method, path and reason only. Pages can't be embedded in other sites.
 - **Only hashes are stored.** The Mac stores hashes of device keys and pairing tokens, never the keys themselves.
