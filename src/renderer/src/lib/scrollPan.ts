@@ -15,3 +15,18 @@ export function forwardWheelAtBoundary(e: WheelEvent<HTMLElement>): void {
     e.stopPropagation();
   }
 }
+
+/** For onWheelCapture on a sideways-scrolling area: React Flow pans on its own native listener before a
+ *  bubbling onWheel runs, so only the capture phase can keep a sideways scroll in the area. Up/down
+ *  scrolls, pinches and scrolls past the edge go on to move the canvas. */
+export function keepSidewaysScroll(
+  e: Pick<WheelEvent<HTMLElement>, "deltaX" | "deltaY" | "ctrlKey" | "stopPropagation"> & {
+    currentTarget: Pick<HTMLElement, "scrollLeft" | "clientWidth" | "scrollWidth">;
+  },
+): void {
+  if (e.ctrlKey || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+  const el = e.currentTarget;
+  const canScroll =
+    e.deltaX < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+  if (canScroll) e.stopPropagation();
+}

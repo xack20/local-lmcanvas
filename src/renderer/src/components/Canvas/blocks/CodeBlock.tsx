@@ -1,5 +1,6 @@
 import { memo, useState, type ComponentPropsWithoutRef } from "react";
 import { Check, Copy } from "lucide-react";
+import { keepSidewaysScroll } from "@/lib/scrollPan";
 
 type Props = {
   code: string;
@@ -36,7 +37,10 @@ export const CodeBlock = memo(function CodeBlock({ code, language, innerProps }:
           {copied ? <Check size={10} /> : <Copy size={10} />}
         </button>
       </div>
-      <pre className="node-scroll nowheel m-0 overflow-x-auto px-3 py-2 text-[9.5px] leading-snug">
+      <pre
+        className="node-scroll m-0 overflow-x-auto px-3 py-2 text-[9.5px] leading-snug"
+        onWheelCapture={keepSidewaysScroll}
+      >
         <code
           {...innerProps}
           className={`font-mono ${innerProps?.className ?? ""}`}
