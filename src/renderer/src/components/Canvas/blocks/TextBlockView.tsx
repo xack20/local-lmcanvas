@@ -1,7 +1,6 @@
 import React, { memo, useCallback, useMemo, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import clsx from "clsx";
 import { useCanvasStore } from "@/hooks/useCanvasStore";
 import { forwardWheelAtBoundary } from "@/lib/scrollPan";
@@ -279,7 +278,6 @@ function TextBlockViewImpl({ text, isUser, nodeId, streaming }: Props) {
     <div className={clsx("node-md", "max-w-full min-w-0 cursor-text")}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
         components={components}
       >
         {text}
