@@ -25,10 +25,13 @@ export const VERTICAL_CHILD_OFFSET = 150;
 // match the existing CustomNode fallback.
 export const FALLBACK_NODE_HEIGHT = 300;
 
-// Organize: columns start NODE_WIDTH + ORGANIZE_GAP_X apart (1200 px, as in the 10-17 hand layout),
-// and nodes in a column sit ORGANIZE_GAP_Y below the one above.
-export const ORGANIZE_GAP_X = 100;
-export const ORGANIZE_GAP_Y = 80;
+// Organize: columns start NODE_WIDTH + ORGANIZE_GAP_X apart, and nodes in a column sit ORGANIZE_GAP_Y
+// below the one above. The vertical gap must hold the zoomed-out label above a node (up to ~142 px
+// at the furthest zoom labels show, see nodeLabel.ts) plus the buttons hanging off the node above.
+export const ORGANIZE_GAP_X = 200;
+export const ORGANIZE_GAP_Y = 180;
+// A node's round action buttons hang this far below its box (measured in the app).
+export const NODE_BOTTOM_CONTROLS_HANG = 15;
 // The organize title line above a node's prompt: 15 px of text plus a 6 px margin (CustomNode).
 export const ORGANIZE_TITLE_LINE_HEIGHT = 21;
 

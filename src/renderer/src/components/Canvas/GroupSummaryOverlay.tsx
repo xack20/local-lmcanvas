@@ -2,6 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore, useStoreApi, type Node } from "@xyflow/react";
 import { FALLBACK_NODE_HEIGHT, NODE_WIDTH } from "@/lib/canvasConstants";
+import {
+  NODE_LABEL_CONTEXT_OFFSET,
+  NODE_LABEL_HIDE_ZOOM,
+  NODE_LABEL_LINE_OFFSET,
+  nodeLabelFontSize,
+} from "@/lib/nodeLabel";
 import type {
   GeneratedNodeSummary,
   GroupSummary,
@@ -11,7 +17,6 @@ const GROUP_PADDING = 28;
 const OVERLAP_STEP_BASE = 28;
 const VIEWPORT_VISIBILITY_TOLERANCE = 8;
 const VISIBILITY_DEBOUNCE_MS = 10;
-const NEAR_MAX_ZOOM_OUT_THRESHOLD = 0.15;
 const TOO_ZOOMED_IN_THRESHOLD = 3.0;
 const GEIST_MONO_FONT_STACK =
   "var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
@@ -184,9 +189,8 @@ export function GroupSummaryOverlay({
       el.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
       const safeZoom = zoom > 0 ? zoom : 1;
       const groupTarget = Math.max(11, Math.min(20, 12 * safeZoom));
-      const labelTarget = Math.max(11, Math.min(16, 11 * safeZoom));
       el.style.setProperty("--group-font-size", `${groupTarget / safeZoom}px`);
-      el.style.setProperty("--label-font-size", `${labelTarget / safeZoom}px`);
+      el.style.setProperty("--label-font-size", `${nodeLabelFontSize(safeZoom)}px`);
     };
 
     const unsubscribe = storeApi.subscribe((state) => {
@@ -334,7 +338,7 @@ export function GroupSummaryOverlay({
       });
   }, [isGeneratingNodeSummaries, nodes, summarizedNodeIds, pendingSummaryNodeIds]);
 
-  const isNearMaxZoomOut = currentZoom <= NEAR_MAX_ZOOM_OUT_THRESHOLD;
+  const isNearMaxZoomOut = currentZoom <= NODE_LABEL_HIDE_ZOOM;
   const isTooZoomedIn = currentZoom >= TOO_ZOOMED_IN_THRESHOLD;
   const isGenerating = isGeneratingNodeSummaries || isGeneratingGroups;
   const shouldShowOverlays =
@@ -412,14 +416,16 @@ export function GroupSummaryOverlay({
                   }}
                   style={{
                     left: label.x + 2,
-                    top: `calc(${label.y}px - var(--label-font-size, 11px) * 1.5${label.hasContext ? " - 32px" : ""})`,
+                    top: `calc(${label.y}px - var(--label-font-size, 11px) * ${NODE_LABEL_LINE_OFFSET}${label.hasContext ? ` - ${NODE_LABEL_CONTEXT_OFFSET}px` : ""})`,
+                    // No wider than its node, so it can't run into the next column's label.
+                    maxWidth: label.width - 4,
                     fontSize: "var(--label-font-size, 11px)",
                     lineHeight: 1.05,
                     transformOrigin: "left bottom",
                   }}
                 >
                   <span
-                    className="block whitespace-nowrap font-semibold tracking-tight text-foreground/90"
+                    className="block truncate font-semibold tracking-tight text-foreground/90"
                     style={{
                       fontFamily: GEIST_MONO_FONT_STACK,
                       opacity: 0.96,
@@ -444,7 +450,7 @@ export function GroupSummaryOverlay({
               }}
               style={{
                 left: skeleton.x + 2,
-                top: `calc(${skeleton.y}px - var(--label-font-size, 11px) * 1.5${skeleton.hasContext ? " - 32px" : ""})`,
+                top: `calc(${skeleton.y}px - var(--label-font-size, 11px) * ${NODE_LABEL_LINE_OFFSET}${skeleton.hasContext ? ` - ${NODE_LABEL_CONTEXT_OFFSET}px` : ""})`,
               }}
             >
               <div

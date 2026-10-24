@@ -89,8 +89,8 @@ describe("organize", () => {
 
     expect(net.asked).toHaveLength(1);
     expect(titles(store)).toEqual({ r: "Threads", a: "Cores", b: "Schedulers", d: "Deep dive · Locks" });
-    // 300 px measured + the 21 px title line each node gains: 321 + 80 gap per step.
-    expect(positions(store)).toEqual({ r: { x: 0, y: 0 }, a: { x: 0, y: 401 }, b: { x: 0, y: 802 }, d: { x: 1200, y: 0 } });
+    // 300 px measured + the 21 px title line each node gains: 321 + 180 gap per step; columns 1100 + 200 apart.
+    expect(positions(store)).toEqual({ r: { x: 0, y: 0 }, a: { x: 0, y: 501 }, b: { x: 0, y: 1002 }, d: { x: 1300, y: 0 } });
     const { organized } = store.getState();
     expect(organized.plan.r).toEqual({ title: "Threads", next: "a", kind: "main" });
     expect(organized.undo.a).toEqual({ x: 900, y: 40, title: "prompt a" });
@@ -111,7 +111,7 @@ describe("organize", () => {
     await store.getState().organize(measure);
 
     expect(net.asked).toHaveLength(0);
-    expect(positions(store).d).toEqual({ x: 1200, y: 0 });
+    expect(positions(store).d).toEqual({ x: 1300, y: 0 });
     expect(net.writes.length).toBeGreaterThan(0);
   });
 
@@ -191,7 +191,7 @@ describe("organize", () => {
     await store.getState().organize(screen);
 
     expect(positions(store)).toEqual(once);
-    expect(once.a).toEqual({ x: 0, y: 401 });
+    expect(once.a).toEqual({ x: 0, y: 501 });
   });
 
   test("a node added while Claude was working is organized and titled next time", async () => {
