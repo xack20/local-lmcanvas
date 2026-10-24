@@ -102,6 +102,9 @@ export type Message = {
   modelFallback?: ModelFallback;
   /** Parsed from a trailing `<next-steps>` block in the model's response. */
   suggestions?: Suggestion[];
+  /** Came from an imported .lmcanvas file, written by someone else: its next-step buttons fill
+   *  the prompt box instead of sending, and its links to local files don't open. */
+  imported?: boolean;
 };
 
 export type ChatData = {

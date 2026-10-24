@@ -148,6 +148,7 @@ export function migrateMessage(raw: unknown): Message | null {
     errorProvider,
     modelFallback,
     suggestions,
+    imported: obj.imported === true ? true : undefined,
   };
 }
 

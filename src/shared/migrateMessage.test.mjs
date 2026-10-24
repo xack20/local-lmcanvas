@@ -33,4 +33,10 @@ describe("migrateMessage", () => {
   test("a reply saved without next steps loads without them", () => {
     expect(migrateMessage(reply({}))?.suggestions).toBeUndefined();
   });
+
+  test("an imported reply stays marked as imported after a load", () => {
+    expect(migrateMessage(reply({ imported: true }))?.imported).toBe(true);
+    expect(migrateMessage(reply({ imported: "yes" }))?.imported).toBeUndefined();
+    expect(migrateMessage(reply({}))?.imported).toBeUndefined();
+  });
 });
