@@ -198,6 +198,8 @@ export function useNodeChat(nodeId: NodeId) {
         if (isAutoNameCheckpoint(finishedReplyCount(Object.values(storeApi.getState().nodes)))) {
           void storeApi.getState().autoName();
         }
+        // Replaces the automatic title once; a node with a real title is left alone.
+        void storeApi.getState().autoTitleNode(nodeId);
       };
       const cleanup = () => {
         // Flush any remaining buffered text (e.g. an unterminated <next-steps>

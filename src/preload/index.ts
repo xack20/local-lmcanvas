@@ -86,6 +86,9 @@ const api: LmcApi = {
   canvasOrganize: {
     plan: (request) => ipcRenderer.invoke("canvasOrganize:plan", request),
   },
+  nodeTitle: {
+    generate: (request) => ipcRenderer.invoke("nodeTitle:generate", request),
+  },
   canvasName: {
     generate: (args: GenerateCanvasNameRequest) =>
       ipcRenderer.invoke("canvasName:generate", args),

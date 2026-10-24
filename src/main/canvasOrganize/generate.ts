@@ -1,17 +1,10 @@
-import { homedir } from "node:os";
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKAssistantMessage, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { BetaContentBlock, BetaTextBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages.mjs";
 import {
   validatePlanReply,
   type AliasPlan,
   type OrganizeKind,
   type OrganizePlanRequest,
 } from "@shared/canvasOrganize";
-import { claudeExecutable } from "../claude/runner";
-
-// Organizing is a quick judgement over short summaries, so it takes the fast, cheap model.
-const ORGANIZE_MODEL = "haiku";
+import { askHaiku } from "../claude/askHaiku";
 
 const SYSTEM_PROMPT = "You output one JSON object only. No prose, no markdown fences.";
 
@@ -40,11 +33,6 @@ Answer with JSON only, in this shape:
 
 The canvas:
 ${JSON.stringify(request)}`;
-}
-
-function assistantText(msg: SDKAssistantMessage): string {
-  const content = msg.message.content as BetaContentBlock[];
-  return content.flatMap((b) => (b.type === "text" ? [(b as BetaTextBlock).text] : [])).join("");
 }
 
 // Paired browsers can call the planner, so what they send is bounded here, not only in the renderer.
@@ -91,38 +79,8 @@ export async function planCanvasOrganize(
 ): Promise<AliasPlan | null> {
   const request = sanitizeRequest(raw);
   if (!request) return null;
-
-  const controller = new AbortController();
-  if (signal) {
-    if (signal.aborted) return null;
-    signal.addEventListener("abort", () => controller.abort(), { once: true });
-  }
-
-  let collected = "";
-  try {
-    const q = query({
-      prompt: organizePrompt(request),
-      options: {
-        cwd: homedir(),
-        model: ORGANIZE_MODEL,
-        pathToClaudeCodeExecutable: claudeExecutable(binPath),
-        systemPrompt: SYSTEM_PROMPT,
-        // The canvas is conversation text, maybe from an imported file, so the planner gets no tools.
-        tools: [],
-        settingSources: [],
-        includePartialMessages: false,
-        abortController: controller,
-      },
-    });
-    for await (const msg of q as AsyncIterable<SDKMessage>) {
-      if (msg.type === "assistant") collected += assistantText(msg);
-      if (msg.type === "result") break;
-    }
-  } catch (err) {
-    console.warn("[canvasOrganize] plan failed:", err);
-    return null;
-  }
-  if (controller.signal.aborted) return null;
+  const collected = await askHaiku(organizePrompt(request), SYSTEM_PROMPT, { binPath, signal, label: "canvasOrganize" });
+  if (collected === null) return null;
 
   const start = collected.indexOf("{");
   const end = collected.lastIndexOf("}");

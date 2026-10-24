@@ -27,7 +27,6 @@ import type {
 } from "@shared/types";
 import {
   getReplayHistoryForNode,
-  messageTextForTitle,
   migrateMessage,
 } from "@shared/history";
 import {
@@ -61,6 +60,7 @@ import {
   type AliasPlan,
 } from "@shared/canvasOrganize";
 import { layoutCanvas } from "@shared/canvasLayout";
+import { nodeTitleInput, promptTitle, shownTitle, titleShows } from "@shared/nodeTitle";
 import { keyboardBranchPosition } from "@/lib/childPlacement";
 import { useRecentsStore } from "@/hooks/useRecentsStore";
 import { createCanvasLockClaim, isCanvasLockClaimed, type CanvasLockClaim } from "@/lib/lockClaims";
@@ -139,6 +139,8 @@ export type CanvasStoreState = {
   organize: (measureHeight: (id: NodeId) => number) => Promise<void>;
   /** Put positions and titles back as they were before the first organize, and forget the plan. */
   undoOrganize: () => void;
+  /** Give a node a short AI title in place of its automatic one, once it has a finished reply. */
+  autoTitleNode: (nodeId: NodeId) => Promise<void>;
   setProvider: (provider: Provider) => void;
   /** Merge a patch into `node.data.nodeSettings`. Per-node overrides for run settings. */
   setNodeSettings: (nodeId: NodeId, patch: Partial<NodeSettings>) => void;
@@ -344,6 +346,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
   // Bumped by every load and by releaseLock, so a load the pane no longer wants can tell.
   let loadGeneration = 0;
   let naming = false;
+  const titling = new Set<NodeId>();
   return createStore<CanvasStoreState>()(
     subscribeWithSelector((set, get) => ({
       canvasId: null,
@@ -638,7 +641,9 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         set((cur) => {
           const current = Object.values(cur.nodes);
           // Heights are measured now, but nodes gain or lose their title line once this plan applies.
-          const titleLine = (p: OrganizePlan | undefined, id: NodeId) => (p?.[id]?.title ? ORGANIZE_TITLE_LINE_HEIGHT : 0);
+          // A node shows a title line when its title isn't just the start of its prompt.
+          const titleLine = (n: CanvasNode, title: string | undefined) =>
+            titleShows(n, title) ? ORGANIZE_TITLE_LINE_HEIGHT : 0;
           // The layout asks for sizes several times a node; each is a DOM read, so read once.
           const sizes = new Map<NodeId, { width: number; height: number }>();
           const sizeOf = (n: CanvasNode) => {
@@ -646,7 +651,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
             if (known) return known;
             const size = {
               width: n.data.width ?? NODE_WIDTH,
-              height: measureHeight(n.id) + titleLine(plan, n.id) - titleLine(cur.organized?.plan, n.id),
+              height:
+                measureHeight(n.id) + titleLine(n, plan[n.id]?.title ?? n.data.title) - titleLine(n, n.data.title),
             };
             sizes.set(n.id, size);
             return size;
@@ -666,6 +672,31 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         get().markDirty();
         await get().save();
         window.dispatchEvent(new Event("lmc:canvases-changed"));
+      },
+
+      autoTitleNode: async (nodeId) => {
+        const s = get();
+        const node = s.nodes[nodeId];
+        if (!s.canvasId || s.lock !== "held" || !node || titling.has(nodeId) || shownTitle(node)) return;
+        const input = nodeTitleInput(node);
+        if (!input) return;
+        const { canvasId } = s;
+        const askedAbout = node.data.title;
+        titling.add(nodeId);
+        let title: string | null = null;
+        try {
+          title = await window.api.nodeTitle.generate(input);
+        } catch (err) {
+          console.warn("Node title failed:", err);
+        } finally {
+          titling.delete(nodeId);
+        }
+        const now = get();
+        const current = now.nodes[nodeId];
+        // Someone else titled it (Organize), or the pane moved on, while Claude was working.
+        if (!title || now.canvasId !== canvasId || now.lock !== "held" || current?.data.title !== askedAbout) return;
+        get().patchNode(nodeId, { title });
+        await get().save();
       },
 
       undoOrganize: () => {
@@ -958,7 +989,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           const n = s.nodes[nodeId];
           if (!n) return s;
           const derivedTitle =
-            n.data.title || (msg.role === "user" ? messageTextForTitle(msg).slice(0, 60) : n.data.title);
+            n.data.title || (msg.role === "user" ? promptTitle(msg) : n.data.title);
           return {
             nodes: {
               ...s.nodes,

@@ -204,6 +204,13 @@ export type CanvasImportResult =
   | { status: "canceled" }
   | { status: "refused"; reason: ShareRefusal };
 
+export type GenerateNodeTitleRequest = {
+  /** The node's first prompt, cut short. */
+  prompt: string;
+  /** The start of the node's first finished reply. */
+  reply: string;
+};
+
 export type GenerateCanvasNameRequest = {
   /** Every prompt on the canvas, oldest first, cut short. */
   prompts: string[];
@@ -323,6 +330,10 @@ export type LmcApi = {
   groupSummary: {
     /** Generate LLM-backed titles for ordered candidate prompts. Returns [] on failure so the caller can fall back to the heuristic clusterer. */
     generate(args: GenerateGroupSummaryRequest): Promise<GeneratedGroupSummaryIpc[]>;
+  };
+  nodeTitle: {
+    /** A short AI title for one node from its prompt and reply. Returns null on failure, so the node keeps its title. */
+    generate(request: GenerateNodeTitleRequest): Promise<string | null>;
   };
   canvasOrganize: {
     /** Ask Haiku for an organize plan for a canvas. Returns null on failure, so the canvas stays as it is. */

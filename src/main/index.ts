@@ -14,6 +14,7 @@ import { readSettings, writeBrowserAccess, writeSettings } from "./storage/setti
 import { ROOT_DIR } from "./storage/paths";
 import { exportCanvasToFile, importCanvasFromFile } from "./storage/canvasShareFiles";
 import { organizeTimeoutMs, planCanvasOrganize } from "./canvasOrganize/generate";
+import { generateNodeTitle } from "./nodeTitle/generate";
 import type { OrganizePlanRequest } from "@shared/canvasOrganize";
 import { SHARE_EXTENSION, SHARE_REFUSAL_TEXT, shareFileName } from "@shared/canvasShare";
 import { buildPromptWithHistory } from "./claude/history";
@@ -63,6 +64,7 @@ import type {
   GenerateCanvasNameRequest,
   CanvasExportResult,
   CanvasImportResult,
+  GenerateNodeTitleRequest,
   PersistentProcessStartArgs,
   FileEntry,
   GenerateGroupSummaryRequest,
@@ -258,7 +260,7 @@ const PERSISTENT_PROCESS_INSTRUCTION = `LONG-RUNNING LOCAL PROCESSES: If the use
 
 const SHARE_FILE_FILTER = { name: "LMCanvas canvas", extensions: [SHARE_EXTENSION] };
 
-// A stuck naming call would leave a Claude process behind; a canvas just keeps its name.
+// A stuck naming or titling call would leave a Claude process behind; the canvas or node keeps its name.
 const CANVAS_NAME_TIMEOUT_MS = 60_000;
 
 const FILES_CACHE_TTL_MS = 10_000;
@@ -894,6 +896,20 @@ function registerIpc(): void {
       } catch (err) {
         console.error("[groupSummary:generate] failed:", err);
         return [];
+      }
+    },
+    "shared",
+  );
+
+  api.handle(
+    "nodeTitle:generate",
+    async (_client, request: GenerateNodeTitleRequest) => {
+      const binPath = claudeBinPathOf(await readSettings());
+      try {
+        return await generateNodeTitle(request, { binPath, signal: AbortSignal.timeout(CANVAS_NAME_TIMEOUT_MS) });
+      } catch (err) {
+        console.error("[nodeTitle:generate] failed:", err);
+        return null;
       }
     },
     "shared",

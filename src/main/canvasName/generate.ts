@@ -1,19 +1,11 @@
-import { homedir } from "node:os";
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKAssistantMessage, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { BetaContentBlock, BetaTextBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages.mjs";
 import { cleanCanvasName } from "@shared/canvasName";
 import type { GenerateCanvasNameRequest } from "@shared/ipc";
-import { claudeExecutable } from "../claude/runner";
+import { askHaiku } from "../claude/askHaiku";
 
 type GenerateCanvasNameArgs = GenerateCanvasNameRequest & {
   binPath?: string;
   signal?: AbortSignal;
 };
-
-// Naming is a small summary that runs in the background on every few replies, so it
-// takes the fast, cheap model rather than the one the user chats with.
-const NAMING_MODEL = "haiku";
 
 const SYSTEM_PROMPT =
   "You output one short plain-text title only. No prose, no markdown, no quotes.";
@@ -41,17 +33,6 @@ ${firstReply}
 </reply>`;
 }
 
-function assistantText(msg: SDKAssistantMessage): string {
-  const content = msg.message.content as BetaContentBlock[];
-  let text = "";
-  for (const block of content) {
-    if (block.type === "text") {
-      text += (block as BetaTextBlock).text;
-    }
-  }
-  return text;
-}
-
 export async function generateCanvasName({
   binPath,
   signal,
@@ -59,41 +40,7 @@ export async function generateCanvasName({
 }: GenerateCanvasNameArgs): Promise<string | null> {
   // Paired browsers call this too, so check the shape before building a prompt from it.
   if (!Array.isArray(request.prompts) || request.prompts.length === 0) return null;
-
-  const controller = new AbortController();
-  if (signal) {
-    if (signal.aborted) return null;
-    signal.addEventListener("abort", () => controller.abort(), { once: true });
-  }
-
-  let collected = "";
-  try {
-    const q = query({
-      prompt: namingPrompt(request),
-      options: {
-        cwd: homedir(),
-        model: NAMING_MODEL,
-        pathToClaudeCodeExecutable: claudeExecutable(binPath),
-        systemPrompt: SYSTEM_PROMPT,
-        // The prompts are conversation text, so the namer gets no tools to act on them with.
-        tools: [],
-        settingSources: [],
-        includePartialMessages: false,
-        abortController: controller,
-      },
-    });
-
-    for await (const msg of q as AsyncIterable<SDKMessage>) {
-      if (msg.type === "assistant") collected += assistantText(msg);
-      if (msg.type === "result") break;
-    }
-  } catch (err) {
-    console.warn("[canvasName] LLM generation failed:", err);
-    return null;
-  }
-
-  if (controller.signal.aborted) return null;
-
-  const name = cleanCanvasName(collected);
+  const answer = await askHaiku(namingPrompt(request), SYSTEM_PROMPT, { binPath, signal, label: "canvasName" });
+  const name = answer === null ? "" : cleanCanvasName(answer);
   return name.length > 0 ? name : null;
 }

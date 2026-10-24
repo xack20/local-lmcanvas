@@ -16,6 +16,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCanvasStore } from "@/hooks/useCanvasStore";
+import { shownTitle } from "@shared/nodeTitle";
 import { useDebouncedSave } from "@/hooks/useDebouncedSave";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useContextMenu } from "@/hooks/useContextMenu";
@@ -312,13 +313,15 @@ function CanvasInner() {
     return buildGroupSummaryInput(drafts);
   }, [rfNodes]);
 
-  const organizePlan = useCanvasStore((s) => s.organized?.plan);
   const mockNodeSummaries = useMemo<GeneratedNodeSummary[]>(() => {
-    return candidates.map((c) => ({
-      nodeId: c.nodeId,
-      summary: organizePlan?.[c.nodeId]?.title ?? c.prompt.split(/\s+/).filter(Boolean).slice(0, 10).join(" "),
-    }));
-  }, [candidates, organizePlan]);
+    return candidates.map((c) => {
+      const node = nodesById[c.nodeId];
+      return {
+        nodeId: c.nodeId,
+        summary: (node && shownTitle(node)) ?? c.prompt.split(/\s+/).filter(Boolean).slice(0, 10).join(" "),
+      };
+    });
+  }, [candidates, nodesById]);
 
   const { summaries: groupSummaries, isGenerating: isGeneratingGroups } =
     useGroupSummaries(candidates);

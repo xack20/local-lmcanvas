@@ -23,6 +23,7 @@ import type { Attachment } from "@shared/ipc";
 import { NodeResponse } from "./NodeResponse";
 import { NodePromptInput, type NodePromptInputHandle } from "./NodePromptInput";
 import { AskUserPrompt } from "./AskUserPrompt";
+import { shownTitle } from "@shared/nodeTitle";
 import { SelectionActionButton } from "./SelectionActionButton";
 import { CustomNodeContextBanner } from "./CustomNodeContextBanner";
 import { TemporaryBadge } from "./TemporaryBadge";
@@ -50,8 +51,8 @@ function CustomNodeImpl(props: NodeProps) {
   const patchNode = useCanvasStore((s) => s.patchNode);
   const compacting = useCanvasStore((s) => s.compactingNodeIds[id] === true);
   const compactError = useCanvasStore((s) => s.compactErrors[id]);
-  // Only Organize's titles are drawn: every node's own title just repeats its prompt.
-  const organizeTitle = useCanvasStore((s) => s.organized?.plan[id]?.title);
+  // An automatic title only repeats the start of the prompt, so only real titles are drawn.
+  const nodeTitle = useCanvasStore((s) => (s.nodes[id] ? shownTitle(s.nodes[id]) : undefined));
   const setCompactError = useCanvasStore((s) => s.setCompactError);
   const merging = useCanvasStore((s) => s.merging);
   const mergeIds = useCanvasStore((s) => s.mergeIds);
@@ -303,10 +304,10 @@ function CustomNodeImpl(props: NodeProps) {
               autoFocus={!pendingAutoSubmit}
             />
           )}
-          {organizeTitle && (
+          {nodeTitle && (
             // Fixed 15 px + 6 px margin: ORGANIZE_TITLE_LINE_HEIGHT counts on exactly this.
-            <div className="mb-1.5 h-[15px] truncate text-[10px] leading-[15px] font-medium text-muted-foreground" title={organizeTitle}>
-              {organizeTitle}
+            <div className="mb-1.5 h-[15px] truncate text-[10px] leading-[15px] font-medium text-muted-foreground" title={nodeTitle}>
+              {nodeTitle}
             </div>
           )}
           {userMessage && !promptEdit.isEditing && (

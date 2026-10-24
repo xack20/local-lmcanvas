@@ -9,6 +9,7 @@ import type {
   OrganizeSnapshot,
 } from "./types";
 import { messageTextForTitle } from "./history";
+import { cleanNodeTitle } from "./nodeTitle";
 
 export type { CanvasOrganized, OrganizeKind, OrganizeNodePlan, OrganizePlan, OrganizeSnapshot } from "./types";
 
@@ -29,7 +30,6 @@ export type OrganizePlanRequest = {
 export type AliasPlan = Record<string, OrganizeNodePlan>;
 
 const PLAN_TEXT_CHARS = 200;
-const TITLE_CHARS = 60;
 const KINDS: readonly string[] = ["main", "deep-dive", "off-topic"] satisfies OrganizeKind[];
 
 export function chatNodes(nodes: CanvasNode[]): CanvasNode[] {
@@ -87,7 +87,7 @@ export function validatePlanReply(raw: unknown, request: OrganizePlanRequest): A
   for (const e of raw.nodes) {
     const entry = isRecord(e) && typeof e.id === "string" ? byAlias.get(e.id) : undefined;
     if (!entry || !isRecord(e)) continue;
-    const title = typeof e.title === "string" ? cleanTitle(e.title) : "";
+    const title = typeof e.title === "string" ? cleanNodeTitle(e.title) : "";
     plan[entry.id] = {
       ...(title ? { title } : {}),
       ...(typeof e.next === "string" && entry.children.includes(e.next) ? { next: e.next } : {}),
@@ -163,10 +163,6 @@ function firstText(messages: Message[], role: Message["role"]): string {
 function cut(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > PLAN_TEXT_CHARS ? `${flat.slice(0, PLAN_TEXT_CHARS)}…` : flat;
-}
-
-function cleanTitle(title: string): string {
-  return title.replace(/^["'“”]+|["'“”]+$/g, "").replace(/\s+/g, " ").trim().slice(0, TITLE_CHARS).trim();
 }
 
 function isKind(v: unknown): v is OrganizeKind {
