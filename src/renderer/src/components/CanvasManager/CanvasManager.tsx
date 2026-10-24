@@ -14,6 +14,12 @@ import { CanvasItem } from "./CanvasItem";
 import { CanvasSearch, type CanvasSearchRef } from "./CanvasSearch";
 import { DeleteCanvasModal } from "./DeleteCanvasModal";
 import { onOpenSettings } from "@/lib/openSettings";
+import { isCanvasLockedError } from "@shared/canvasLock";
+
+const UNDO_HELD_ELSEWHERE = "Couldn't undo: this canvas is open somewhere else.";
+const UNDO_FAILED = "Couldn't undo organize.";
+// How long a notice under the canvas list stays up.
+const NOTICE_MS = 6_000;
 
 type CanvasManagerProps = {
   /** Canvas id of the currently-open canvas, if any. */
@@ -30,6 +36,13 @@ export function CanvasManager({
   onOpenChange,
 }: CanvasManagerProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     onOpenChange?.(isOpen);
@@ -143,11 +156,16 @@ export function CanvasManager({
     } else {
       const canvas: Canvas | null = await window.api.canvases.read(id);
       if (!canvas?.organized) return;
-      await window.api.canvases.write({
-        ...canvas,
-        nodes: restoreFromUndo(canvas.nodes, canvas.organized),
-        organized: undefined,
-      });
+      try {
+        await window.api.canvases.write({
+          ...canvas,
+          nodes: restoreFromUndo(canvas.nodes, canvas.organized),
+          organized: undefined,
+        });
+      } catch (err) {
+        setNotice(isCanvasLockedError(err) ? UNDO_HELD_ELSEWHERE : UNDO_FAILED);
+        return;
+      }
     }
     void refresh();
   };
@@ -264,6 +282,11 @@ export function CanvasManager({
                     </motion.button>
                   )}
                 </div>
+                {notice && (
+                  <p role="status" className="px-1 pb-1 text-xs text-amber-600 dark:text-amber-400">
+                    {notice}
+                  </p>
+                )}
               </div>
 
               {/* Canvas list */}

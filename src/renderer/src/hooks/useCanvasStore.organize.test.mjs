@@ -209,6 +209,69 @@ describe("organize", () => {
     expect(net.asked).toHaveLength(2);
   });
 
+  test("if another window takes the canvas during the wait, the result is dropped", async () => {
+    const net = stubApi();
+    await store.getState().loadCanvas(CANVAS_ID);
+    const before = positions(store);
+
+    const done = store.getState().organize(measure);
+    await settle();
+    store.getState().markLockLost(CANVAS_ID);
+    net.answer(ALIAS_PLAN);
+    await done;
+
+    expect(positions(store)).toEqual(before);
+    expect(store.getState().organized).toBeUndefined();
+  });
+
+  test("a second Organize while one is running doesn't start another", async () => {
+    const net = stubApi();
+    await store.getState().loadCanvas(CANVAS_ID);
+
+    const first = store.getState().organize(measure);
+    await settle();
+    await store.getState().organize(measure);
+    expect(net.asked).toHaveLength(1);
+    expect(store.getState().organizing).toBe(true);
+
+    net.answer(ALIAS_PLAN);
+    await first;
+    expect(store.getState().organizing).toBe(false);
+  });
+
+  test("each node's height is read once per organize", async () => {
+    const nodes = baseNodes();
+    stubApi({ nodes, organized: { fingerprint: organizeFingerprint(nodes), plan: {}, undo: {} } });
+    await store.getState().loadCanvas(CANVAS_ID);
+    const reads = [];
+
+    await store.getState().organize((id) => {
+      reads.push(id);
+      return 300;
+    });
+
+    expect(reads.sort()).toEqual(["a", "b", "d", "r"]);
+  });
+
+  test("switching the pane to another canvas during the wait drops the result", async () => {
+    const net = stubApi();
+    const read = window.api.canvases.read;
+    window.api.canvases.read = async (id) => ({ ...(await read(id)), id });
+    await store.getState().loadCanvas(CANVAS_ID);
+
+    const done = store.getState().organize(measure);
+    await settle();
+    await store.getState().loadCanvas("canvas-2");
+    const before = positions(store);
+    net.answer(ALIAS_PLAN);
+    await done;
+
+    expect(store.getState().canvasId).toBe("canvas-2");
+    expect(positions(store)).toEqual(before);
+    expect(store.getState().organized).toBeUndefined();
+    expect(store.getState().organizing).toBe(false);
+  });
+
   test("the planner is sent the current titles and the previous plan's choices", async () => {
     const organized = { fingerprint: "stale", plan: { r: { next: "a", kind: "main" }, d: { kind: "deep-dive" } }, undo: {} };
     const net = stubApi({ organized });

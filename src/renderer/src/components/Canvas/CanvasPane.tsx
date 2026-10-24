@@ -3,9 +3,7 @@ import { Loader2, X } from "lucide-react";
 import { ReactFlowProvider, useStoreApi } from "@xyflow/react";
 import { useOrganizeRequestStore } from "@/hooks/useOrganizeRequestStore";
 import { makeLiveHeightMeasurer } from "@/lib/collisionResolution";
-
-// How long "Couldn't organize…" stays up.
-const ORGANIZE_ERROR_MS = 8_000;
+import { decideOrganizeRequest, ORGANIZE_HELD_ELSEWHERE } from "@/lib/organizeRequest";
 import { Canvas } from "@/components/Canvas/Canvas";
 import {
   CanvasStoreProvider,
@@ -30,6 +28,9 @@ import { useBranchRequestStore } from "@/hooks/useBranchRequestStore";
 import { useBranchFromNode } from "@/hooks/useBranchFromNode";
 import { findMessageTextViewportY } from "@/lib/nodeDom";
 import { saveErrorText } from "@/lib/saveRetry";
+
+// How long "Couldn't organize…" stays up.
+const ORGANIZE_ERROR_MS = 8_000;
 
 type CanvasPaneProps = {
   /** The canvas to load into this pane. Also serves as the pane's identity. */
@@ -129,13 +130,25 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
 
   // Organize asked for from the canvas list: run it once this canvas is on screen and ours to save.
   useEffect(() => {
-    if (!organizeRequest || organizeRequest.canvasId !== id) return;
-    if (!loaded || canvasId !== id || lock !== "held") return;
+    if (!organizeRequest) return;
+    const action = decideOrganizeRequest(organizeRequest.canvasId, {
+      paneCanvasId: id,
+      shownCanvasId: canvasId,
+      loaded,
+      error,
+      lock,
+    });
+    if (action === "ignore" || action === "wait") return;
     consumeOrganize(organizeRequest.canvasId, organizeRequest.requestedAt);
+    if (action === "refuse") {
+      // A failed load already shows its own message.
+      if (!error) storeApi.setState({ organizeError: ORGANIZE_HELD_ELSEWHERE });
+      return;
+    }
     // One frame for the nodes to be on screen, so their heights can be read.
     const measure = makeLiveHeightMeasurer(() => flow.getState().transform[2]);
     requestAnimationFrame(() => void organize(measure));
-  }, [organizeRequest, loaded, canvasId, id, lock, flow, organize, consumeOrganize]);
+  }, [organizeRequest, loaded, canvasId, id, error, lock, flow, storeApi, organize, consumeOrganize]);
 
   useEffect(() => {
     if (!organizeError) return;

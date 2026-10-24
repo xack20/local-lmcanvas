@@ -61,13 +61,13 @@ import {
   type AliasPlan,
 } from "@shared/canvasOrganize";
 import { layoutCanvas } from "@shared/canvasLayout";
+import { keyboardBranchPosition } from "@/lib/childPlacement";
+import { useRecentsStore } from "@/hooks/useRecentsStore";
+import { createCanvasLockClaim, isCanvasLockClaimed, type CanvasLockClaim } from "@/lib/lockClaims";
 
 const ORGANIZE_WAIT_FOR_REPLY = "Wait for the reply to finish, then organize.";
 const ORGANIZE_NO_ANSWER = "Couldn't organize this canvas. Claude didn't answer.";
 const ORGANIZE_REPLY_STARTED = "A reply started while organizing. Try again when it finishes.";
-import { keyboardBranchPosition } from "@/lib/childPlacement";
-import { useRecentsStore } from "@/hooks/useRecentsStore";
-import { createCanvasLockClaim, isCanvasLockClaimed, type CanvasLockClaim } from "@/lib/lockClaims";
 
 type Dirty = { count: number; lastChangeAt: number };
 
@@ -600,7 +600,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       organize: async (measureHeight) => {
         const s = get();
         const canvasId = s.canvasId;
-        if (!canvasId || s.lock !== "held") return;
+        // One organize at a time: a second would race the first and hide its progress early.
+        if (!canvasId || s.lock !== "held" || s.organizing) return;
         if (isReplyRunning(s)) {
           set({ organizeError: ORGANIZE_WAIT_FOR_REPLY });
           return;
@@ -621,8 +622,9 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           }
           set({ organizing: false });
           const now = get();
-          // The pane moved to another canvas while Claude was working: this result is for nothing on screen.
-          if (now.canvasId !== canvasId) return;
+          // The pane moved to another canvas, or another window took this one, while Claude was working:
+          // the result is for nothing this pane can show or save.
+          if (now.canvasId !== canvasId || now.lock !== "held") return;
           if (!reply) {
             set({ organizeError: ORGANIZE_NO_ANSWER });
             return;
@@ -637,10 +639,18 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           const current = Object.values(cur.nodes);
           // Heights are measured now, but nodes gain or lose their title line once this plan applies.
           const titleLine = (p: OrganizePlan | undefined, id: NodeId) => (p?.[id]?.title ? ORGANIZE_TITLE_LINE_HEIGHT : 0);
-          const sizeOf = (n: CanvasNode) => ({
-            width: n.data.width ?? NODE_WIDTH,
-            height: measureHeight(n.id) + titleLine(plan, n.id) - titleLine(cur.organized?.plan, n.id),
-          });
+          // The layout asks for sizes several times a node; each is a DOM read, so read once.
+          const sizes = new Map<NodeId, { width: number; height: number }>();
+          const sizeOf = (n: CanvasNode) => {
+            const known = sizes.get(n.id);
+            if (known) return known;
+            const size = {
+              width: n.data.width ?? NODE_WIDTH,
+              height: measureHeight(n.id) + titleLine(plan, n.id) - titleLine(cur.organized?.plan, n.id),
+            };
+            sizes.set(n.id, size);
+            return size;
+          };
           const placed = layoutCanvas(current, plan, sizeOf, { x: ORGANIZE_GAP_X, y: ORGANIZE_GAP_Y });
           const nodes = Object.fromEntries(
             current.map((n) => {

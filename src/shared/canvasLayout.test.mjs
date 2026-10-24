@@ -104,6 +104,20 @@ describe("layoutCanvas", () => {
     expect(layout(nodes)).toEqual(first);
   });
 
+  test("nodes of different widths are spaced by the widest and never overlap", () => {
+    const widths = { r: 600, a: 1100, d: 900 };
+    const nodes = [node("r", [], 1), node("a", ["r"], 2), node("d", ["r"], 3)];
+    const positions = layoutCanvas(nodes, { d: { kind: "deep-dive" } }, (n) => ({ width: widths[n.id], height: 300 }), GAP);
+
+    expect(positions.d.x - positions.r.x).toBe(1100 + GAP.x);
+    const rects = Object.entries(positions).map(([id, p]) => ({ id, ...p, w: widths[id] }));
+    for (const a of rects) {
+      for (const b of rects) {
+        if (a.id < b.id) expect(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + 300 && b.y < a.y + 300).toBe(false);
+      }
+    }
+  });
+
   test("a tall node pushes the nodes below it down", () => {
     const positions = layout([node("a", [], 1), node("b", ["a"], 2)], {}, { a: 900 });
     expect(positions.b).toEqual({ x: 0, y: 980 });

@@ -2,7 +2,12 @@ import { homedir } from "node:os";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKAssistantMessage, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { BetaContentBlock, BetaTextBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages.mjs";
-import { validatePlanReply, type AliasPlan, type OrganizePlanRequest } from "@shared/canvasOrganize";
+import {
+  validatePlanReply,
+  type AliasPlan,
+  type OrganizeKind,
+  type OrganizePlanRequest,
+} from "@shared/canvasOrganize";
 import { claudeExecutable } from "../claude/runner";
 
 // Organizing is a quick judgement over short summaries, so it takes the fast, cheap model.
@@ -42,24 +47,50 @@ function assistantText(msg: SDKAssistantMessage): string {
   return content.flatMap((b) => (b.type === "text" ? [(b as BetaTextBlock).text] : [])).join("");
 }
 
-function isRequest(v: unknown): v is OrganizePlanRequest {
-  return (
-    typeof v === "object" &&
-    v !== null &&
-    Array.isArray((v as OrganizePlanRequest).nodes) &&
-    (v as OrganizePlanRequest).nodes.every(
-      (n) => typeof n === "object" && n !== null && typeof n.id === "string" && Array.isArray(n.children),
-    )
-  );
+// Paired browsers can call the planner, so what they send is bounded here, not only in the renderer.
+const MAX_REQUEST_NODES = 5_000;
+const MAX_REQUEST_TEXT = 300;
+const KINDS: readonly string[] = ["main", "deep-dive", "off-topic"] satisfies OrganizeKind[];
+
+type Loose = Record<string, unknown>;
+const isLoose = (v: unknown): v is Loose => typeof v === "object" && v !== null && !Array.isArray(v);
+const text = (v: unknown): string | undefined => (typeof v === "string" ? v.slice(0, MAX_REQUEST_TEXT) : undefined);
+
+/** The request with every field checked and every text cut short, or null when it's malformed or
+ *  bigger than any real canvas. */
+export function sanitizeRequest(raw: unknown): OrganizePlanRequest | null {
+  if (!isLoose(raw) || !Array.isArray(raw.nodes) || raw.nodes.length === 0 || raw.nodes.length > MAX_REQUEST_NODES) {
+    return null;
+  }
+  const nodes: OrganizePlanRequest["nodes"] = [];
+  for (const n of raw.nodes) {
+    if (!isLoose(n) || typeof n.id !== "string") return null;
+    const prev = isLoose(n.previous) ? n.previous : undefined;
+    const previous = {
+      ...(typeof prev?.next === "string" ? { next: prev.next } : {}),
+      ...(typeof prev?.kind === "string" && KINDS.includes(prev.kind) ? { kind: prev.kind as OrganizeKind } : {}),
+    };
+    const title = text(n.title);
+    nodes.push({
+      id: n.id,
+      ...(typeof n.parent === "string" ? { parent: n.parent } : {}),
+      children: (Array.isArray(n.children) ? n.children : []).filter((c): c is string => typeof c === "string"),
+      prompt: text(n.prompt) ?? "",
+      reply: text(n.reply) ?? "",
+      ...(title ? { title } : {}),
+      ...(Object.keys(previous).length > 0 ? { previous } : {}),
+    });
+  }
+  return { nodes };
 }
 
 /** Haiku's organize plan for the canvas, checked against the request; null when Claude fails. */
 export async function planCanvasOrganize(
-  request: OrganizePlanRequest,
+  raw: OrganizePlanRequest,
   { binPath, signal }: { binPath?: string; signal?: AbortSignal },
 ): Promise<AliasPlan | null> {
-  // Paired browsers call this too, so check the shape before building a prompt from it.
-  if (!isRequest(request) || request.nodes.length === 0) return null;
+  const request = sanitizeRequest(raw);
+  if (!request) return null;
 
   const controller = new AbortController();
   if (signal) {
