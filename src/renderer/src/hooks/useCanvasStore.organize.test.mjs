@@ -272,6 +272,20 @@ describe("organize", () => {
     expect(store.getState().organizing).toBe(false);
   });
 
+  test("organizing and undoing keep the canvas's place in the list; an ordinary edit still moves it up", async () => {
+    const net = stubApi();
+    await store.getState().loadCanvas(CANVAS_ID);
+
+    await organizeWithAnswer(net);
+    expect(net.writes.at(-1).updatedAt).toBe(1);
+    store.getState().undoOrganize();
+    expect(net.writes.at(-1).updatedAt).toBe(1);
+
+    store.getState().setName("Renamed", "user");
+    await store.getState().save();
+    expect(net.writes.at(-1).updatedAt).toBeGreaterThan(1);
+  });
+
   test("the planner is sent the current titles and the previous plan's choices", async () => {
     const organized = { fingerprint: "stale", plan: { r: { next: "a", kind: "main" }, d: { kind: "deep-dive" } }, undo: {} };
     const net = stubApi({ organized });

@@ -65,7 +65,9 @@ export async function readCanvas(id: string): Promise<Canvas | null> {
 
 export async function writeCanvas(canvas: Canvas): Promise<void> {
   await ensureDirs();
-  const updated: Canvas = { ...canvas, updatedAt: Date.now() };
+  // updatedAt is when the canvas was last used, which orders the canvas list. The caller decides:
+  // tidying it (Organize, Undo organize) passes the old time so the canvas keeps its place.
+  const updated: Canvas = { ...canvas, updatedAt: Number.isFinite(canvas.updatedAt) ? canvas.updatedAt : Date.now() };
   await atomicWriteFile(canvasFilePath(canvas.id), JSON.stringify(updated, null, 2));
 }
 

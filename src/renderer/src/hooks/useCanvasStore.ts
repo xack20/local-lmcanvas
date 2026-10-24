@@ -77,6 +77,8 @@ export type CanvasStoreState = {
   nameSource: NameSource | undefined;
   cwd: string | undefined;
   createdAt: number;
+  /** When the canvas was last used; orders the canvas list. Tidying doesn't change it. */
+  updatedAt: number;
   provider: Provider | undefined;
   /** Mirror of AppSettings.defaultProvider — populated on canvas load so effective-provider lookups don't have to hit IPC. */
   defaultProvider: Provider | undefined;
@@ -206,7 +208,8 @@ export type CanvasStoreState = {
   /** The branch as a replay sends it, with each node's quoted selection and merge context. */
   getHistoryForNode: (id: NodeId) => Message[];
   serialize: () => Canvas | null;
-  markDirty: () => void;
+  /** Note an unsaved change. `keepOrder` is for tidying (Organize): it doesn't count as using the canvas. */
+  markDirty: (opts?: { keepOrder?: boolean }) => void;
   save: () => Promise<void>;
   setPrefill: (
     nodeId: NodeId,
@@ -262,7 +265,7 @@ function canvasFromState(s: CanvasStoreState): Canvas | null {
     ...(s.nameSource ? { nameSource: s.nameSource } : {}),
     ...(s.organized ? { organized: s.organized } : {}),
     createdAt: s.createdAt,
-    updatedAt: Date.now(),
+    updatedAt: s.updatedAt,
     nodes: Object.values(s.nodes).map(withoutTransientSelection),
     edges: s.edges,
     provider: s.provider,
@@ -357,6 +360,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       organizeError: null,
       cwd: undefined,
       createdAt: 0,
+      updatedAt: 0,
       provider: undefined,
       defaultProvider: undefined,
       providerConfigs: undefined,
@@ -523,6 +527,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           organizeError: null,
           cwd: canvas.cwd,
           createdAt: canvas.createdAt,
+          updatedAt: canvas.updatedAt,
           provider: canvas.provider,
           defaultProvider: settings.defaultProvider,
           providerConfigs: settings.providers,
@@ -669,7 +674,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           const organized = { fingerprint: organizeFingerprint(before), plan, undo: snapshotFor(current, cur.organized) };
           return { nodes, organized };
         });
-        get().markDirty();
+        get().markDirty({ keepOrder: true });
         await get().save();
         window.dispatchEvent(new Event("lmc:canvases-changed"));
       },
@@ -706,7 +711,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           nodes: Object.fromEntries(restoreFromUndo(Object.values(s.nodes), organized).map((n) => [n.id, n])),
           organized: undefined,
         }));
-        get().markDirty();
+        get().markDirty({ keepOrder: true });
         void get()
           .save()
           .then(() => window.dispatchEvent(new Event("lmc:canvases-changed")));
@@ -1247,9 +1252,10 @@ export function createCanvasStoreApi(): CanvasStoreApi {
 
       serialize: () => canvasFromState(get()),
 
-      markDirty: () => {
+      markDirty: (opts) => {
         set((s) => ({
           dirty: { count: s.dirty.count + 1, lastChangeAt: Date.now() },
+          updatedAt: opts?.keepOrder ? s.updatedAt : Date.now(),
         }));
       },
 

@@ -186,7 +186,12 @@ export function CanvasManager({
     } else {
       const canvas: Canvas | null = await window.api.canvases.read(id);
       if (!canvas) return;
-      await window.api.canvases.write({ ...canvas, ...nameAfterRename(newName, canvas.nodes, canvas.name) });
+      // Renaming counts as using the canvas, so it moves to the top of the list as before.
+      await window.api.canvases.write({
+        ...canvas,
+        ...nameAfterRename(newName, canvas.nodes, canvas.name),
+        updatedAt: Date.now(),
+      });
     }
     void refresh();
   };

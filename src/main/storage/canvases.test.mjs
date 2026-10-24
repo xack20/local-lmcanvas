@@ -39,6 +39,15 @@ describe("reading a canvas", () => {
     expect((await canvases.readCanvas("byapp")).nameSource).toBe("auto");
   });
 
+  test("a save keeps the last-used time it's given, so the list order changes only when a canvas is used", async () => {
+    await canvases.writeCanvas({ id: "kept", name: "Kept", createdAt: 1, updatedAt: 123, nodes: [], edges: [] });
+    expect((await canvases.readCanvas("kept")).updatedAt).toBe(123);
+
+    const before = Date.now();
+    await canvases.writeCanvas({ id: "stamped", name: "Stamped", createdAt: 1, nodes: [], edges: [] });
+    expect((await canvases.readCanvas("stamped")).updatedAt).toBeGreaterThanOrEqual(before);
+  });
+
   test("keeps a valid organized field and reports it in the canvas list", async () => {
     const organized = { fingerprint: "f", plan: { a: { title: "A" } }, undo: { a: { x: 1, y: 2 } } };
     saveRaw("organized", { organized });
