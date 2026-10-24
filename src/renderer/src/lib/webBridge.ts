@@ -381,6 +381,7 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
     },
     groupSummary: { generate: (args) => call("groupSummary:generate", args) },
     canvasName: { generate: (args) => call("canvasName:generate", args) },
+    canvasOrganize: { plan: (request) => call("canvasOrganize:plan", request) },
     canvasLock: {
       acquire: (canvasId) => call("canvasLock:acquire", canvasId),
       takeOver: (canvasId) => call("canvasLock:takeOver", canvasId),

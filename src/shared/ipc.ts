@@ -1,4 +1,5 @@
 import type { ShareRefusal } from "./canvasShare";
+import type { AliasPlan, OrganizePlanRequest } from "./canvasOrganize";
 import type {
   AppSettings,
   Canvas,
@@ -322,6 +323,10 @@ export type LmcApi = {
   groupSummary: {
     /** Generate LLM-backed titles for ordered candidate prompts. Returns [] on failure so the caller can fall back to the heuristic clusterer. */
     generate(args: GenerateGroupSummaryRequest): Promise<GeneratedGroupSummaryIpc[]>;
+  };
+  canvasOrganize: {
+    /** Ask Haiku for an organize plan for a canvas. Returns null on failure, so the canvas stays as it is. */
+    plan(request: OrganizePlanRequest): Promise<AliasPlan | null>;
   };
   canvasName: {
     /** Generate an LLM-backed canvas name from the canvas's prompts. Returns null on failure so the caller keeps its current name. */
