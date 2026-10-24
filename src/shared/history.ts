@@ -6,6 +6,7 @@ import type {
   ModelFallback,
   NodeId,
   Provider,
+  Suggestion,
   TextBlock,
   ToolUseBlock,
   UsageSummary,
@@ -133,6 +134,7 @@ export function migrateMessage(raw: unknown): Message | null {
   const errorProvider = isProvider(obj.errorProvider) ? obj.errorProvider : undefined;
   const modelFallback = parseModelFallback(obj.modelFallback);
   const usage = parseUsage(obj.usage);
+  const suggestions = parseSuggestions(obj.suggestions);
   return {
     id: obj.id,
     role: obj.role,
@@ -145,6 +147,7 @@ export function migrateMessage(raw: unknown): Message | null {
     errorCode,
     errorProvider,
     modelFallback,
+    suggestions,
   };
 }
 
@@ -172,6 +175,14 @@ function parseModelFallback(value: unknown): ModelFallback | undefined {
     toModel: fallback.toModel,
     reason: fallback.reason,
   };
+}
+
+function parseSuggestions(value: unknown): Suggestion[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const suggestions = value
+    .filter((s) => typeof s?.label === "string" && s.label && typeof s.prompt === "string" && s.prompt)
+    .map((s: Suggestion) => ({ label: s.label, prompt: s.prompt }));
+  return suggestions.length > 0 ? suggestions : undefined;
 }
 
 function parseUsage(raw: unknown): UsageSummary | undefined {
