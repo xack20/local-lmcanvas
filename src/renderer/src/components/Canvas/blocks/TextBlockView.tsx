@@ -12,6 +12,8 @@ type Props = {
   isUser?: boolean;
   nodeId?: string;
   streaming?: boolean;
+  /** False for text someone else wrote (an imported reply): its links to local files don't open. */
+  opensLocalLinks?: boolean;
 };
 
 type CodeProps = ComponentPropsWithoutRef<"code"> & { inline?: boolean };
@@ -140,7 +142,7 @@ function processChildren(
   return children;
 }
 
-function TextBlockViewImpl({ text, isUser, nodeId, streaming }: Props) {
+function TextBlockViewImpl({ text, isUser, nodeId, streaming, opensLocalLinks = true }: Props) {
   const cwd = useCanvasStore((state) =>
     nodeId ? state.getEffectiveCwd(nodeId) : state.cwd,
   );
@@ -164,11 +166,12 @@ function TextBlockViewImpl({ text, isUser, nodeId, streaming }: Props) {
         window.open(href, "_blank", "noopener,noreferrer");
         return;
       }
+      if (!opensLocalLinks) return;
       const path = toOpenablePath(href, cwd);
       if (!path) return;
       void window.api.shell.openPath(path);
     },
-    [cwd],
+    [cwd, opensLocalLinks],
   );
 
   const components = useMemo((): Components => {

@@ -345,9 +345,11 @@ function CustomNodeImpl(props: NodeProps) {
                 onSuggestionClick={(prompt) =>
                   branch({
                     prefill: prompt,
-                    autoSubmit: true,
+                    // Someone else wrote an imported reply's buttons, and chats run with full tool
+                    // access, so its prompt waits in the box until the user sends it.
+                    autoSubmit: !assistantMessage.imported,
                     placeBelow: true,
-                    focusViewport: false,
+                    focusViewport: assistantMessage.imported === true,
                   })
                 }
               />

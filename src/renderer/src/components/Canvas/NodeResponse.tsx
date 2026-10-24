@@ -161,6 +161,7 @@ export function NodeResponse({
                 text={item.text}
                 nodeId={nodeId}
                 streaming={isStreaming && idx === lastIdx}
+                opensLocalLinks={!message.imported}
               />
             );
           }

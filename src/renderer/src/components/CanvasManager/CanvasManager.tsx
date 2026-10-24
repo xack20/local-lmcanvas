@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { PanelLeft, Plus, Settings } from "lucide-react";
+import { FileUp, PanelLeft, Plus, Settings } from "lucide-react";
 import type { Canvas, CanvasSummary } from "@shared/types";
 import { nameAfterRename } from "@shared/canvasName";
 import { navigateToCanvas } from "@/lib/canvasNavigation";
 import { usePaneRegistry } from "@/hooks/usePaneRegistry";
+import { isBrowser } from "@/lib/webBridge";
 import { SettingsModal } from "@/components/SettingsModal";
 import { useFocusRequestStore } from "@/hooks/useFocusRequestStore";
 import { CanvasItem } from "./CanvasItem";
@@ -115,11 +116,29 @@ export function CanvasManager({
     requestFocus(canvasId, startNodeId);
   };
 
-  const handleRename = async (id: string, newName: string) => {
-    // An open canvas saves its own copy, so rename it there or its next save brings the old name back.
-    // Without the lock it can't save; the file write below then fails as it always has.
+  // An open canvas holds its own copy and saves it over the file, so changes go through its store.
+  // Without the lock it can't save; callers then use the file as they always have.
+  const openStoreFor = (id: string) => {
     const open = usePaneRegistry.getState().stores[id];
-    if (open?.getState().canvasId === id && open.getState().lock === "held") {
+    return open?.getState().canvasId === id && open.getState().lock === "held" ? open : null;
+  };
+
+  const handleExport = async (id: string) => {
+    await openStoreFor(id)?.getState().save();
+    await window.api.canvases.exportToFile(id);
+  };
+
+  const handleImport = async () => {
+    const result = await window.api.canvases.importFromFile();
+    if (result.status !== "imported") return;
+    setIsOpen(false);
+    await refresh();
+    navigateToCanvas(result.canvasId);
+  };
+
+  const handleRename = async (id: string, newName: string) => {
+    const open = openStoreFor(id);
+    if (open) {
       open.getState().rename(newName);
       await open.getState().save();
     } else {
@@ -208,6 +227,18 @@ export function CanvasManager({
                       </span>
                     </div>
                   </motion.button>
+                  {!isBrowser && (
+                    <motion.button
+                      onClick={() => void handleImport()}
+                      className="ml-2 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border text-foreground transition-colors hover:bg-muted"
+                      title="Import a canvas file"
+                      aria-label="Import a canvas file"
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.99 }}
+                    >
+                      <FileUp className="h-5 w-5" />
+                    </motion.button>
+                  )}
                 </div>
               </div>
 
@@ -241,6 +272,7 @@ export function CanvasManager({
                         isDeleting={deletingCanvasId === c.id}
                         onSelect={() => handleSelect(c)}
                         onRename={(newName) => handleRename(c.id, newName)}
+                        onExport={() => void handleExport(c.id)}
                         onDelete={() => handleDelete(c.id, c.name)}
                         onThreadSelect={handleThreadSelect}
                       />
