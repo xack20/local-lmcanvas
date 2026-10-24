@@ -250,6 +250,9 @@ Rules:
 
 const PERSISTENT_PROCESS_INSTRUCTION = `LONG-RUNNING LOCAL PROCESSES: If the user asks you to start a dev server, watcher, preview server, or similar command that should remain available after your response completes, do not rely on a transient agent background job. Start it in a detached/nohup shell with output redirected to a log file, report the PID and log path, and verify the service over HTTP or with an equivalent health check when possible.`;
 
+// A stuck naming call would leave a Claude process behind; a canvas just keeps its name.
+const CANVAS_NAME_TIMEOUT_MS = 60_000;
+
 const FILES_CACHE_TTL_MS = 10_000;
 const filesCache = new Map<string, { at: number; files: FileEntry[] }>();
 
@@ -847,11 +850,15 @@ function registerIpc(): void {
   api.handle(
     "canvasName:generate",
     async (_client, args: GenerateCanvasNameRequest) => {
-      const settings = await readSettings();
-      const model = settingsClaudeModelArg(settings);
-      const binPath = claudeBinPathOf(settings);
+      const binPath = claudeBinPathOf(await readSettings());
       try {
-        return await generateCanvasName({ prompt: args.prompt, model, binPath });
+        return await generateCanvasName({
+          prompts: args.prompts,
+          firstReply: args.firstReply,
+          currentName: args.currentName,
+          binPath,
+          signal: AbortSignal.timeout(CANVAS_NAME_TIMEOUT_MS),
+        });
       } catch (err) {
         console.error("[canvasName:generate] failed:", err);
         return null;

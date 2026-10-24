@@ -13,6 +13,7 @@ import type {
   ErrorCode,
   Message,
   ModelFallback,
+  NameSource,
   NodeId,
   NodeSettings,
   Provider,
@@ -27,7 +28,16 @@ import {
   messageTextForTitle,
   migrateMessage,
 } from "@shared/history";
-import { isUnnamedCanvasName, promptToCanvasName } from "@shared/canvasName";
+import {
+  canvasNameInput,
+  finishedReplyCount,
+  firstUserPrompt,
+  isAutoNamed,
+  isPlaceholderName,
+  isUnnamedCanvasName,
+  nameAfterRename,
+  promptToCanvasName,
+} from "@shared/canvasName";
 import type { Attachment, CanvasLockResult } from "@shared/ipc";
 import { isCanvasLockedError } from "@shared/canvasLock";
 import { getEdgeHandles } from "@/lib/edgeHandles";
@@ -42,6 +52,7 @@ type Dirty = { count: number; lastChangeAt: number };
 export type CanvasStoreState = {
   canvasId: string | null;
   name: string;
+  nameSource: NameSource | undefined;
   cwd: string | undefined;
   createdAt: number;
   provider: Provider | undefined;
@@ -91,7 +102,11 @@ export type CanvasStoreState = {
   releaseLock: () => void;
   chatStarted: (chatId: string) => void;
   chatSettled: (chatId: string) => void;
-  setName: (name: string) => void;
+  setName: (name: string, source: NameSource) => void;
+  /** A rename from the canvas list. An empty name hands naming back to the app. */
+  rename: (typed: string) => void;
+  /** Ask Claude for a name that says what this canvas is about, unless the user named it. */
+  autoName: () => Promise<void>;
   setProvider: (provider: Provider) => void;
   /** Merge a patch into `node.data.nodeSettings`. Per-node overrides for run settings. */
   setNodeSettings: (nodeId: NodeId, patch: Partial<NodeSettings>) => void;
@@ -209,6 +224,7 @@ function canvasFromState(s: CanvasStoreState): Canvas | null {
   return {
     id: s.canvasId,
     name: s.name,
+    ...(s.nameSource ? { nameSource: s.nameSource } : {}),
     createdAt: s.createdAt,
     updatedAt: Date.now(),
     nodes: Object.values(s.nodes).map(withoutTransientSelection),
@@ -248,16 +264,6 @@ function mapMessage(
     return fn(m);
   });
   return changed ? next : messages;
-}
-
-function firstUserPrompt(nodes: CanvasNode[]): string | null {
-  for (const node of nodes) {
-    const message = node.data.chat.messages.find((m) => m.role === "user");
-    if (!message) continue;
-    const text = messageTextForTitle(message).trim();
-    if (text) return text;
-  }
-  return null;
 }
 
 type SetCanvasState = StoreApi<CanvasStoreState>["setState"];
@@ -303,10 +309,12 @@ export function createCanvasStoreApi(): CanvasStoreApi {
   const lockClaim = createCanvasLockClaim();
   // Bumped by every load and by releaseLock, so a load the pane no longer wants can tell.
   let loadGeneration = 0;
+  let naming = false;
   return createStore<CanvasStoreState>()(
     subscribeWithSelector((set, get) => ({
       canvasId: null,
       name: "",
+      nameSource: undefined,
       cwd: undefined,
       createdAt: 0,
       provider: undefined,
@@ -469,6 +477,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         set({
           canvasId: canvas.id,
           name: canvas.name,
+          nameSource: canvas.nameSource,
           cwd: canvas.cwd,
           createdAt: canvas.createdAt,
           provider: canvas.provider,
@@ -490,7 +499,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           : null;
         const fallbackName = prompt ? promptToCanvasName(prompt) : "";
         if (prompt && fallbackName) {
-          set({ name: fallbackName });
+          set({ name: fallbackName, nameSource: "auto" });
           get().markDirty();
           const notifyCanvasList = () =>
             window.dispatchEvent(new Event("lmc:canvases-changed"));
@@ -501,11 +510,51 @@ export function createCanvasStoreApi(): CanvasStoreApi {
               console.error("Failed to save prompt-derived canvas name:", err),
             );
         }
+        // A canvas that never got a real name, older ones included, gets one once it has a reply.
+        const loadedNodes = Object.values(get().nodes);
+        if (isPlaceholderName(get().name, loadedNodes) && finishedReplyCount(loadedNodes) > 0) {
+          void get().autoName();
+        }
       },
 
-      setName: (name) => {
-        set({ name });
+      setName: (name, source) => {
+        set({ name, nameSource: source });
         get().markDirty();
+      },
+
+      rename: (typed) => {
+        set((s) => nameAfterRename(typed, Object.values(s.nodes), s.name));
+        get().markDirty();
+        if (get().nameSource === "auto") void get().autoName();
+      },
+
+      autoName: async () => {
+        const s = get();
+        const nodes = Object.values(s.nodes);
+        if (naming || s.lock !== "held" || !s.canvasId || !isAutoNamed(s.name, s.nameSource, nodes)) return;
+        const input = canvasNameInput(nodes);
+        if (input.prompts.length === 0) return;
+        const { canvasId, name: askedAbout } = s;
+        naming = true;
+        let name: string | null = null;
+        try {
+          name = await window.api.canvasName.generate({
+            ...input,
+            ...(isPlaceholderName(askedAbout, nodes) ? {} : { currentName: askedAbout }),
+          });
+        } catch (err) {
+          console.warn("Canvas naming failed:", err);
+        } finally {
+          naming = false;
+        }
+        const now = get();
+        // The user renamed it, or the pane moved to another canvas, while Claude was working.
+        if (!name || now.canvasId !== canvasId || now.name !== askedAbout || now.nameSource === "user") return;
+        if (name === now.name && now.nameSource === "auto") return;
+        set({ name, nameSource: "auto" });
+        get().markDirty();
+        await get().save();
+        window.dispatchEvent(new Event("lmc:canvases-changed"));
       },
 
       setProvider: (provider) => {

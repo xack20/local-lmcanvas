@@ -128,6 +128,7 @@ function migrateCanvas(raw: Partial<Canvas> & Record<string, unknown>): Canvas |
   return {
     id: raw.id,
     name: raw.name,
+    ...(raw.nameSource === "auto" || raw.nameSource === "user" ? { nameSource: raw.nameSource } : {}),
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
     nodes,

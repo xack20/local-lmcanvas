@@ -261,9 +261,14 @@ export type ProviderConfig = {
   serviceTier?: CodexServiceTier;
 };
 
+/** Who set a canvas's name: the app, which keeps renaming it as the canvas grows, or the user. */
+export type NameSource = "auto" | "user";
+
 export type Canvas = {
   id: string;
   name: string;
+  /** Missing on canvases saved before names were tracked; see `isAutoNamed`. */
+  nameSource?: NameSource;
   /** Default working directory inherited by nodes that don't override it. */
   cwd?: string;
   createdAt: number;

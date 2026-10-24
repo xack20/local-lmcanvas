@@ -3,17 +3,43 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKAssistantMessage, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { BetaContentBlock, BetaTextBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages.mjs";
 import { cleanCanvasName } from "@shared/canvasName";
+import type { GenerateCanvasNameRequest } from "@shared/ipc";
 import { claudeExecutable } from "../claude/runner";
 
-type GenerateCanvasNameArgs = {
-  prompt: string;
-  model?: string;
+type GenerateCanvasNameArgs = GenerateCanvasNameRequest & {
   binPath?: string;
   signal?: AbortSignal;
 };
 
+// Naming is a small summary that runs in the background on every few replies, so it
+// takes the fast, cheap model rather than the one the user chats with.
+const NAMING_MODEL = "haiku";
+
 const SYSTEM_PROMPT =
   "You output one short plain-text title only. No prose, no markdown, no quotes.";
+
+function namingPrompt({ prompts, firstReply, currentName }: GenerateCanvasNameRequest): string {
+  const keep = currentName
+    ? `\nThe canvas is currently named "${currentName}". Return exactly that name unless the canvas's focus has clearly moved.\n`
+    : "";
+  return `Name this canvas: a workspace of branching AI chats. The name appears in a list of canvases, so it must say what this canvas is specifically about.
+
+Rules:
+- 2 to 6 words, at most 50 characters.
+- Name the specific subject and goal, not a broad category: "Java threads on Apple silicon", not "Programming help".
+- Write it in the language the user writes in.
+- No quotes, emoji or closing punctuation. Return only the name.
+${keep}
+The user's prompts, oldest first:
+<prompts>
+${prompts.map((p) => `- ${p}`).join("\n")}
+</prompts>
+
+The start of the first reply:
+<reply>
+${firstReply}
+</reply>`;
+}
 
 function assistantText(msg: SDKAssistantMessage): string {
   const content = msg.message.content as BetaContentBlock[];
@@ -27,13 +53,12 @@ function assistantText(msg: SDKAssistantMessage): string {
 }
 
 export async function generateCanvasName({
-  prompt,
-  model,
   binPath,
   signal,
+  ...request
 }: GenerateCanvasNameArgs): Promise<string | null> {
-  const trimmed = prompt.trim();
-  if (!trimmed) return null;
+  // Paired browsers call this too, so check the shape before building a prompt from it.
+  if (!Array.isArray(request.prompts) || request.prompts.length === 0) return null;
 
   const controller = new AbortController();
   if (signal) {
@@ -41,30 +66,18 @@ export async function generateCanvasName({
     signal.addEventListener("abort", () => controller.abort(), { once: true });
   }
 
-  const generationPrompt = `Generate a short, descriptive name for a canvas based on this first user prompt.
-
-Rules:
-- Maximum 50 characters.
-- Capture the specific subject or task.
-- Return only the name.
-- Do not wrap the name in quotes.
-
-First prompt:
-${trimmed}`;
-
   let collected = "";
   try {
     const q = query({
-      prompt: generationPrompt,
+      prompt: namingPrompt(request),
       options: {
         cwd: homedir(),
-        model,
+        model: NAMING_MODEL,
         pathToClaudeCodeExecutable: claudeExecutable(binPath),
         systemPrompt: SYSTEM_PROMPT,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        // The prompts are conversation text, so the namer gets no tools to act on them with.
+        tools: [],
         settingSources: [],
-        allowedTools: [],
         includePartialMessages: false,
         abortController: controller,
       },

@@ -13,7 +13,12 @@ import type {
 } from "@shared/types";
 import type { Attachment, ChatEvent } from "@shared/ipc";
 import { buildMergeContext } from "@shared/history";
-import { isUnnamedCanvasName, promptToCanvasName } from "@shared/canvasName";
+import {
+  finishedReplyCount,
+  isAutoNameCheckpoint,
+  isUnnamedCanvasName,
+  promptToCanvasName,
+} from "@shared/canvasName";
 import { createNextStepsStreamer } from "@/lib/nextStepsParser";
 import { contextBaseFor } from "@shared/contextSize";
 
@@ -78,7 +83,7 @@ export function useNodeChat(nodeId: NodeId) {
       if (shouldNameCanvas) {
         const fallbackName = promptToCanvasName(trimmed);
         if (fallbackName) {
-          storeApi.getState().setName(fallbackName);
+          storeApi.getState().setName(fallbackName, "auto");
           const notifyCanvasList = () =>
             window.dispatchEvent(new Event("lmc:canvases-changed"));
           void storeApi
@@ -185,6 +190,9 @@ export function useNodeChat(nodeId: NodeId) {
         storeApi.getState().finalizeMessage(nodeId, asstMsgId);
         setStreaming(false);
         void storeApi.getState().save();
+        if (isAutoNameCheckpoint(finishedReplyCount(Object.values(storeApi.getState().nodes)))) {
+          void storeApi.getState().autoName();
+        }
       };
       const cleanup = () => {
         // Flush any remaining buffered text (e.g. an unterminated <next-steps>

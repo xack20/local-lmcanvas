@@ -117,7 +117,8 @@ export const CanvasItem = ({
   };
 
   const handleSaveName = async () => {
-    if (!newName.trim() || newName.trim() === canvas.name) {
+    // An empty name is allowed: it hands naming back to the app.
+    if (newName.trim() === canvas.name) {
       setIsRenaming(false);
       return;
     }
@@ -221,6 +222,8 @@ export const CanvasItem = ({
               ref={inputRef}
               type="text"
               value={newName}
+              placeholder="Leave empty to name it automatically"
+              aria-label="Canvas name"
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={handleSaveName}

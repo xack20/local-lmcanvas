@@ -193,7 +193,11 @@ export type GenerateGroupSummaryRequest = {
 };
 
 export type GenerateCanvasNameRequest = {
-  prompt: string;
+  /** Every prompt on the canvas, oldest first, cut short. */
+  prompts: string[];
+  firstReply: string;
+  /** The app's current name for the canvas, kept unless its focus has clearly moved. Unset for a placeholder. */
+  currentName?: string;
 };
 
 export type PersistentProcessStartArgs = {
@@ -305,7 +309,7 @@ export type LmcApi = {
     generate(args: GenerateGroupSummaryRequest): Promise<GeneratedGroupSummaryIpc[]>;
   };
   canvasName: {
-    /** Generate an LLM-backed canvas name from the first prompt. Returns null on failure so the caller keeps its prompt-derived fallback. */
+    /** Generate an LLM-backed canvas name from the canvas's prompts. Returns null on failure so the caller keeps its current name. */
     generate(args: GenerateCanvasNameRequest): Promise<string | null>;
   };
   canvasLock: {

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PanelLeft, Plus, Settings } from "lucide-react";
 import type { Canvas, CanvasSummary } from "@shared/types";
+import { nameAfterRename } from "@shared/canvasName";
 import { navigateToCanvas } from "@/lib/canvasNavigation";
+import { usePaneRegistry } from "@/hooks/usePaneRegistry";
 import { SettingsModal } from "@/components/SettingsModal";
 import { useFocusRequestStore } from "@/hooks/useFocusRequestStore";
 import { CanvasItem } from "./CanvasItem";
@@ -114,9 +116,17 @@ export function CanvasManager({
   };
 
   const handleRename = async (id: string, newName: string) => {
-    const canvas: Canvas | null = await window.api.canvases.read(id);
-    if (!canvas) return;
-    await window.api.canvases.write({ ...canvas, name: newName });
+    // An open canvas saves its own copy, so rename it there or its next save brings the old name back.
+    // Without the lock it can't save; the file write below then fails as it always has.
+    const open = usePaneRegistry.getState().stores[id];
+    if (open?.getState().canvasId === id && open.getState().lock === "held") {
+      open.getState().rename(newName);
+      await open.getState().save();
+    } else {
+      const canvas: Canvas | null = await window.api.canvases.read(id);
+      if (!canvas) return;
+      await window.api.canvases.write({ ...canvas, ...nameAfterRename(newName, canvas.nodes, canvas.name) });
+    }
     void refresh();
   };
 
