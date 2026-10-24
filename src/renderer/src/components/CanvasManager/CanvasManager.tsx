@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { FileUp, PanelLeft, Plus, Settings } from "lucide-react";
 import type { Canvas, CanvasSummary } from "@shared/types";
 import { nameAfterRename } from "@shared/canvasName";
+import { restoreFromUndo } from "@shared/canvasOrganize";
+import { useOrganizeRequestStore } from "@/hooks/useOrganizeRequestStore";
 import { navigateToCanvas } from "@/lib/canvasNavigation";
 import { usePaneRegistry } from "@/hooks/usePaneRegistry";
 import { isBrowser } from "@/lib/webBridge";
@@ -126,6 +128,28 @@ export function CanvasManager({
   const handleExport = async (id: string) => {
     await openStoreFor(id)?.getState().save();
     await window.api.canvases.exportToFile(id);
+  };
+
+  // Organize measures nodes on screen, so it runs in the pane once that canvas is showing.
+  const handleOrganize = (id: string) => {
+    useOrganizeRequestStore.getState().requestOrganize(id);
+    if (id !== currentCanvasId) navigateToCanvas(id);
+  };
+
+  const handleUndoOrganize = async (id: string) => {
+    const open = openStoreFor(id);
+    if (open) {
+      open.getState().undoOrganize();
+    } else {
+      const canvas: Canvas | null = await window.api.canvases.read(id);
+      if (!canvas?.organized) return;
+      await window.api.canvases.write({
+        ...canvas,
+        nodes: restoreFromUndo(canvas.nodes, canvas.organized),
+        organized: undefined,
+      });
+    }
+    void refresh();
   };
 
   const handleImport = async () => {
@@ -273,6 +297,8 @@ export function CanvasManager({
                         onSelect={() => handleSelect(c)}
                         onRename={(newName) => handleRename(c.id, newName)}
                         onExport={() => void handleExport(c.id)}
+                        onOrganize={() => handleOrganize(c.id)}
+                        onUndoOrganize={() => void handleUndoOrganize(c.id)}
                         onDelete={() => handleDelete(c.id, c.name)}
                         onThreadSelect={handleThreadSelect}
                       />

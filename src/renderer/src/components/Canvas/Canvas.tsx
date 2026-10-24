@@ -312,12 +312,13 @@ function CanvasInner() {
     return buildGroupSummaryInput(drafts);
   }, [rfNodes]);
 
+  const organizePlan = useCanvasStore((s) => s.organized?.plan);
   const mockNodeSummaries = useMemo<GeneratedNodeSummary[]>(() => {
     return candidates.map((c) => ({
       nodeId: c.nodeId,
-      summary: c.prompt.split(/\s+/).filter(Boolean).slice(0, 10).join(" "),
+      summary: organizePlan?.[c.nodeId]?.title ?? c.prompt.split(/\s+/).filter(Boolean).slice(0, 10).join(" "),
     }));
-  }, [candidates]);
+  }, [candidates, organizePlan]);
 
   const { summaries: groupSummaries, isGenerating: isGeneratingGroups } =
     useGroupSummaries(candidates);

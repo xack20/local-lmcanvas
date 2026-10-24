@@ -50,6 +50,8 @@ function CustomNodeImpl(props: NodeProps) {
   const patchNode = useCanvasStore((s) => s.patchNode);
   const compacting = useCanvasStore((s) => s.compactingNodeIds[id] === true);
   const compactError = useCanvasStore((s) => s.compactErrors[id]);
+  // Only Organize's titles are drawn: every node's own title just repeats its prompt.
+  const organizeTitle = useCanvasStore((s) => s.organized?.plan[id]?.title);
   const setCompactError = useCanvasStore((s) => s.setCompactError);
   const merging = useCanvasStore((s) => s.merging);
   const mergeIds = useCanvasStore((s) => s.mergeIds);
@@ -300,6 +302,11 @@ function CustomNodeImpl(props: NodeProps) {
               streaming={streaming}
               autoFocus={!pendingAutoSubmit}
             />
+          )}
+          {organizeTitle && (
+            <div className="mb-1.5 truncate text-[10px] font-medium text-muted-foreground" title={organizeTitle}>
+              {organizeTitle}
+            </div>
           )}
           {userMessage && !promptEdit.isEditing && (
             <div

@@ -1,6 +1,11 @@
 import { useEffect } from "react";
-import { X } from "lucide-react";
-import { ReactFlowProvider } from "@xyflow/react";
+import { Loader2, X } from "lucide-react";
+import { ReactFlowProvider, useStore } from "@xyflow/react";
+import { useOrganizeRequestStore } from "@/hooks/useOrganizeRequestStore";
+import { makeDomHeightMeasurer } from "@/lib/collisionResolution";
+
+// How long "Couldn't organize…" stays up.
+const ORGANIZE_ERROR_MS = 8_000;
 import { Canvas } from "@/components/Canvas/Canvas";
 import {
   CanvasStoreProvider,
@@ -83,6 +88,12 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
   const releaseLock = useCanvasStore((s) => s.releaseLock);
   const nodes = useCanvasStore((s) => s.nodes);
   const nodeCount = Object.keys(nodes).length;
+  const organize = useCanvasStore((s) => s.organize);
+  const organizing = useCanvasStore((s) => s.organizing);
+  const organizeError = useCanvasStore((s) => s.organizeError);
+  const organizeRequest = useOrganizeRequestStore((s) => s.request);
+  const consumeOrganize = useOrganizeRequestStore((s) => s.consume);
+  const zoom = useStore((s) => s.transform[2]);
   const addNode = useCanvasStore((s) => s.addNode);
   const setActive = useActivePaneStore((s) => s.setActive);
   const activePaneId = useActivePaneStore((s) => s.activePaneId);
@@ -115,6 +126,21 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
   useEffect(() => {
     if (!splitMode) setActive(id);
   }, [id, splitMode, setActive]);
+
+  // Organize asked for from the canvas list: run it once this canvas is on screen and ours to save.
+  useEffect(() => {
+    if (!organizeRequest || organizeRequest.canvasId !== id) return;
+    if (!loaded || canvasId !== id || lock !== "held") return;
+    consumeOrganize(organizeRequest.canvasId, organizeRequest.requestedAt);
+    // One frame for the nodes to be on screen, so their heights can be read.
+    requestAnimationFrame(() => void organize(makeDomHeightMeasurer(zoom)));
+  }, [organizeRequest, loaded, canvasId, id, lock, zoom, organize, consumeOrganize]);
+
+  useEffect(() => {
+    if (!organizeError) return;
+    const timer = setTimeout(() => storeApi.setState({ organizeError: null }), ORGANIZE_ERROR_MS);
+    return () => clearTimeout(timer);
+  }, [organizeError, storeApi]);
 
   useEffect(() => {
     if (!focusRequest) return;
@@ -155,6 +181,26 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
             className="max-w-[90vw] truncate rounded-md border border-amber-500/40 bg-card px-3 py-1.5 text-xs text-amber-600 shadow-lg dark:text-amber-400"
           >
             {saveErrorText(saveError)}
+          </div>
+        </div>
+      )}
+
+      {(organizing || organizeError) && (
+        <div className="pointer-events-none absolute top-20 left-1/2 z-30 -translate-x-1/2">
+          <div
+            role="status"
+            className={
+              organizeError
+                ? "max-w-[90vw] truncate rounded-md border border-amber-500/40 bg-card px-3 py-1.5 text-xs text-amber-600 shadow-lg dark:text-amber-400"
+                : "flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-lg"
+            }
+          >
+            {organizeError ?? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Organizing…
+              </>
+            )}
           </div>
         </div>
       )}

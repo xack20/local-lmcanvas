@@ -8,6 +8,8 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  Undo2,
+  Workflow,
 } from "lucide-react";
 import clsx from "clsx";
 import type { Canvas, CanvasSummary } from "@shared/types";
@@ -24,6 +26,10 @@ type CanvasItemProps = {
   onRename: (newName: string) => Promise<void>;
   /** Save the canvas to a .lmcanvas file to share. Not offered in the browser. */
   onExport: () => void;
+  /** Lay the canvas out and title its nodes with AI. */
+  onOrganize: () => void;
+  /** Put the canvas back as it was before it was first organized. Offered when `canvas.organized`. */
+  onUndoOrganize: () => void;
   onDelete: () => void;
   /** Click handler for a thread inside this canvas; receives the starting node id. */
   onThreadSelect: (canvasId: string, startNodeId: string) => void;
@@ -42,6 +48,8 @@ export const CanvasItem = ({
   onSelect,
   onRename,
   onExport,
+  onOrganize,
+  onUndoOrganize,
   onDelete,
   onThreadSelect,
 }: CanvasItemProps) => {
@@ -309,6 +317,30 @@ export const CanvasItem = ({
                     >
                       <Download className="h-4 w-4" />
                       Export…
+                    </button>
+                  )}
+                  <button
+                    className="w-full cursor-pointer px-3 py-2 text-sm text-left transition-colors flex items-center gap-2 text-foreground hover:bg-muted"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowMenu(false);
+                      onOrganize();
+                    }}
+                  >
+                    <Workflow className="h-4 w-4" />
+                    Organize
+                  </button>
+                  {canvas.organized && (
+                    <button
+                      className="w-full cursor-pointer px-3 py-2 text-sm text-left transition-colors flex items-center gap-2 text-foreground hover:bg-muted"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowMenu(false);
+                        onUndoOrganize();
+                      }}
+                    >
+                      <Undo2 className="h-4 w-4" />
+                      Undo organize
                     </button>
                   )}
                   <button
