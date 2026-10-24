@@ -264,6 +264,18 @@ export type ProviderConfig = {
   serviceTier?: CodexServiceTier;
 };
 
+/** How a branch sits after Organize: on the main line, a deep dive to the right, or off-topic to the left. */
+export type OrganizeKind = "main" | "deep-dive" | "off-topic";
+
+/** Organize's plan for one node: its title, which child continues its line, and its kind. */
+export type OrganizeNodePlan = { title?: string; next?: NodeId; kind?: OrganizeKind };
+export type OrganizePlan = Record<NodeId, OrganizeNodePlan>;
+
+/** Positions and titles from before the user first organized, for Undo organize. */
+export type OrganizeSnapshot = Record<NodeId, { x: number; y: number; title?: string }>;
+
+export type CanvasOrganized = { fingerprint: string; plan: OrganizePlan; undo: OrganizeSnapshot };
+
 /** Who set a canvas's name: the app, which keeps renaming it as the canvas grows, or the user. */
 export type NameSource = "auto" | "user";
 
@@ -272,6 +284,8 @@ export type Canvas = {
   name: string;
   /** Missing on canvases saved before names were tracked; see `isAutoNamed`. */
   nameSource?: NameSource;
+  /** Set by Organize: the plan it applied and the way back. Cleared by Undo organize. */
+  organized?: CanvasOrganized;
   /** Default working directory inherited by nodes that don't override it. */
   cwd?: string;
   createdAt: number;
@@ -290,6 +304,8 @@ export type CanvasSummary = {
   updatedAt: number;
   nodeCount: number;
   provider?: Provider;
+  /** The canvas has been organized and can be undone. */
+  organized?: boolean;
 };
 
 export type AppSettings = {

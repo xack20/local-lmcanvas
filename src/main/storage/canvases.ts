@@ -11,6 +11,7 @@ import type {
 import { PROVIDERS } from "@shared/types";
 import { migrateMessage } from "@shared/history";
 import { isUnnamedCanvasName } from "@shared/canvasName";
+import { parseOrganized } from "@shared/canvasOrganize";
 import { CANVASES_DIR, atomicWriteFile, canvasFilePath, ensureDirs } from "./paths";
 
 export async function listCanvases(): Promise<CanvasSummary[]> {
@@ -33,6 +34,7 @@ export async function listCanvases(): Promise<CanvasSummary[]> {
         updatedAt: parsed.updatedAt ?? 0,
         nodeCount: parsed.nodes?.length ?? 0,
         provider: isProvider(parsed.provider) ? parsed.provider : undefined,
+        organized: Boolean(parseOrganized(parsed.organized)),
       });
     } catch (err) {
       console.error(`[canvases] failed to load ${full}:`, err);
@@ -125,10 +127,12 @@ function migrateCanvas(raw: Partial<Canvas> & Record<string, unknown>): Canvas |
     ? (raw.nodes as CanvasNode[]).map(migrateNode)
     : [];
   const cwd = typeof raw.cwd === "string" && raw.cwd.length > 0 ? raw.cwd : undefined;
+  const organized = parseOrganized(raw.organized);
   return {
     id: raw.id,
     name: raw.name,
     ...(raw.nameSource === "auto" || raw.nameSource === "user" ? { nameSource: raw.nameSource } : {}),
+    ...(organized ? { organized } : {}),
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
     nodes,

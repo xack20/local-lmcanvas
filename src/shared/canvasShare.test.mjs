@@ -148,6 +148,11 @@ describe("toShareFile", () => {
     }
   });
 
+  test("export leaves out the organize plan", () => {
+    const organized = { fingerprint: "f", plan: { root: { title: "Threads" } }, undo: { root: { x: 1, y: 2 } } };
+    expect(JSON.stringify(toShareFile({ ...canvas(), organized }, 99))).not.toContain("organized");
+  });
+
   test("export turns a plan and a multiple-choice answer into text", () => {
     const replyTexts = texts(message(toShareFile(canvas(), 99), "root", "a1"));
     expect(replyTexts).toContain("**Plan**\n\n1. Do A");

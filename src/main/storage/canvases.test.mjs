@@ -39,6 +39,17 @@ describe("reading a canvas", () => {
     expect((await canvases.readCanvas("byapp")).nameSource).toBe("auto");
   });
 
+  test("keeps a valid organized field and reports it in the canvas list", async () => {
+    const organized = { fingerprint: "f", plan: { a: { title: "A" } }, undo: { a: { x: 1, y: 2 } } };
+    saveRaw("organized", { organized });
+    saveRaw("plain", {});
+
+    expect((await canvases.readCanvas("organized")).organized).toEqual(organized);
+    const list = await canvases.listCanvases();
+    expect(list.find((c) => c.id === "organized").organized).toBe(true);
+    expect(list.find((c) => c.id === "plain").organized).toBe(false);
+  });
+
   test("drops an unknown name source and leaves older canvases without one", async () => {
     saveRaw("bogus", { nameSource: "robot" });
     saveRaw("older", {});
