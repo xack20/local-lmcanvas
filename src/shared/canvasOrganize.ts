@@ -54,7 +54,8 @@ export function buildPlanRequest(
   nodes: CanvasNode[],
   previous?: OrganizePlan,
 ): { request: OrganizePlanRequest; aliasToId: Record<string, NodeId> } {
-  const chats = byCreation(chatNodes(nodes));
+  // An unsent blank node has nothing to title yet, and a title given now would stick after its first prompt.
+  const chats = byCreation(chatNodes(nodes)).filter((n) => n.data.chat.messages.length > 0);
   const aliasOf = new Map(chats.map((n, i) => [n.id, `n${i + 1}`]));
   const aliasToId = Object.fromEntries(chats.map((n, i) => [`n${i + 1}`, n.id]));
   const request = {

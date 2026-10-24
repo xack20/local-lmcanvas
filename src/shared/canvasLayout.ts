@@ -33,7 +33,8 @@ export function layoutCanvas(
   const pitch = Math.max(...chats.map((n) => sizeOf(n).width)) + gap.x;
   const isSide = (id: NodeId) => plan[id]?.kind === "deep-dive" || plan[id]?.kind === "off-topic";
 
-  const columns = new Map<number, Array<[number, number]>>();
+  // Columns of the tree being laid out; each tree gets its own, so trees never interleave.
+  let columns = new Map<number, Array<[number, number]>>();
   const placed = new Map<NodeId, { col: number; y: number }>();
 
   const lineFrom = (start: CanvasNode): CanvasNode[] => {
@@ -72,11 +73,19 @@ export function layoutCanvas(
     }
   };
 
-  // Roots side by side, oldest first; then anything only reachable through a cycle.
+  // Trees side by side, oldest first, then anything only reachable through a cycle. Each tree is
+  // laid out on its own, then shifted so its leftmost column sits right of the previous tree.
+  let rightEdge: number | null = null;
   for (const start of [...roots, ...chats]) {
     if (placed.has(start.id)) continue;
-    const nextCol = placed.size === 0 ? 0 : Math.max(...columns.keys()) + 1;
-    placeLine(start, nextCol, 0);
+    columns = new Map();
+    const earlier = new Set(placed.keys());
+    placeLine(start, 0, 0);
+    const tree = [...placed].filter(([id]) => !earlier.has(id));
+    const cols = tree.map(([, p]) => p.col);
+    const shift: number = rightEdge === null ? 0 : rightEdge + 1 - Math.min(...cols);
+    for (const [id, p] of tree) placed.set(id, { col: p.col + shift, y: p.y });
+    rightEdge = Math.max(...cols) + shift;
   }
 
   return Object.fromEntries(

@@ -89,7 +89,8 @@ describe("organize", () => {
 
     expect(net.asked).toHaveLength(1);
     expect(titles(store)).toEqual({ r: "Threads", a: "Cores", b: "Schedulers", d: "Deep dive · Locks" });
-    expect(positions(store)).toEqual({ r: { x: 0, y: 0 }, a: { x: 0, y: 380 }, b: { x: 0, y: 760 }, d: { x: 1200, y: 0 } });
+    // 300 px measured + the 21 px title line each node gains: 321 + 80 gap per step.
+    expect(positions(store)).toEqual({ r: { x: 0, y: 0 }, a: { x: 0, y: 401 }, b: { x: 0, y: 802 }, d: { x: 1200, y: 0 } });
     const { organized } = store.getState();
     expect(organized.plan.r).toEqual({ title: "Threads", next: "a", kind: "main" });
     expect(organized.undo.a).toEqual({ x: 900, y: 40, title: "prompt a" });
@@ -174,6 +175,38 @@ describe("organize", () => {
     expect(positions(store).a).toEqual({ x: 900, y: 40 });
     expect(store.getState().organized).toBeUndefined();
     expect(net.writes.at(-1).organized).toBeUndefined();
+  });
+
+  test("organizing again gives the same positions, counting the title line the first organize adds", async () => {
+    const net = stubApi();
+    await store.getState().loadCanvas(CANVAS_ID);
+    // Like the screen: a node is 21 px taller once it shows an organize title.
+    const screen = (id) => 300 + (store.getState().organized?.plan[id]?.title ? 21 : 0);
+
+    const first = store.getState().organize(screen);
+    await settle();
+    net.answer(ALIAS_PLAN);
+    await first;
+    const once = positions(store);
+    await store.getState().organize(screen);
+
+    expect(positions(store)).toEqual(once);
+    expect(once.a).toEqual({ x: 0, y: 401 });
+  });
+
+  test("a node added while Claude was working is organized and titled next time", async () => {
+    const net = stubApi();
+    await store.getState().loadCanvas(CANVAS_ID);
+
+    const done = store.getState().organize(measure);
+    await settle();
+    store.getState().addNode(chatNode("late", ["b"], 20, { x: 9, y: 9 }, "prompt late"));
+    net.answer(ALIAS_PLAN);
+    await done;
+    void store.getState().organize(measure);
+    await settle();
+
+    expect(net.asked).toHaveLength(2);
   });
 
   test("the planner is sent the current titles and the previous plan's choices", async () => {

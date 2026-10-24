@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { Loader2, X } from "lucide-react";
-import { ReactFlowProvider, useStore } from "@xyflow/react";
+import { ReactFlowProvider, useStoreApi } from "@xyflow/react";
 import { useOrganizeRequestStore } from "@/hooks/useOrganizeRequestStore";
-import { makeDomHeightMeasurer } from "@/lib/collisionResolution";
+import { makeLiveHeightMeasurer } from "@/lib/collisionResolution";
 
 // How long "Couldn't organize…" stays up.
 const ORGANIZE_ERROR_MS = 8_000;
@@ -93,7 +93,7 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
   const organizeError = useCanvasStore((s) => s.organizeError);
   const organizeRequest = useOrganizeRequestStore((s) => s.request);
   const consumeOrganize = useOrganizeRequestStore((s) => s.consume);
-  const zoom = useStore((s) => s.transform[2]);
+  const flow = useStoreApi();
   const addNode = useCanvasStore((s) => s.addNode);
   const setActive = useActivePaneStore((s) => s.setActive);
   const activePaneId = useActivePaneStore((s) => s.activePaneId);
@@ -133,8 +133,9 @@ function CanvasPaneInner({ id, splitMode, controlsSide = "right" }: CanvasPanePr
     if (!loaded || canvasId !== id || lock !== "held") return;
     consumeOrganize(organizeRequest.canvasId, organizeRequest.requestedAt);
     // One frame for the nodes to be on screen, so their heights can be read.
-    requestAnimationFrame(() => void organize(makeDomHeightMeasurer(zoom)));
-  }, [organizeRequest, loaded, canvasId, id, lock, zoom, organize, consumeOrganize]);
+    const measure = makeLiveHeightMeasurer(() => flow.getState().transform[2]);
+    requestAnimationFrame(() => void organize(measure));
+  }, [organizeRequest, loaded, canvasId, id, lock, flow, organize, consumeOrganize]);
 
   useEffect(() => {
     if (!organizeError) return;

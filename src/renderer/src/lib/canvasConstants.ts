@@ -29,6 +29,8 @@ export const FALLBACK_NODE_HEIGHT = 300;
 // and nodes in a column sit ORGANIZE_GAP_Y below the one above.
 export const ORGANIZE_GAP_X = 100;
 export const ORGANIZE_GAP_Y = 80;
+// The organize title line above a node's prompt: 15 px of text plus a 6 px margin (CustomNode).
+export const ORGANIZE_TITLE_LINE_HEIGHT = 21;
 
 // Camera defaults
 export const FOCUS_ZOOM = 1.5;

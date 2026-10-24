@@ -304,7 +304,8 @@ function CustomNodeImpl(props: NodeProps) {
             />
           )}
           {organizeTitle && (
-            <div className="mb-1.5 truncate text-[10px] font-medium text-muted-foreground" title={organizeTitle}>
+            // Fixed 15 px + 6 px margin: ORGANIZE_TITLE_LINE_HEIGHT counts on exactly this.
+            <div className="mb-1.5 h-[15px] truncate text-[10px] leading-[15px] font-medium text-muted-foreground" title={organizeTitle}>
               {organizeTitle}
             </div>
           )}

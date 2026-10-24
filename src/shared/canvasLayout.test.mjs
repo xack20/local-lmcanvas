@@ -79,6 +79,17 @@ describe("layoutCanvas", () => {
     expect(positions.r2c).toEqual({ x: 2 * PITCH, y: 380 });
   });
 
+  test("a later tree's off-topic branch stays right of the earlier tree, never inside it", () => {
+    const nodes = [
+      node("r1", [], 1), node("m1", ["r1"], 2), node("m2", ["m1"], 3), node("dd", ["m2"], 4),
+      node("r2", [], 10), node("c2", ["r2"], 11), node("o2", ["r2"], 12),
+    ];
+    const positions = layout(nodes, { dd: { kind: "deep-dive" }, o2: { kind: "off-topic" } });
+    const rightmostOfTree1 = Math.max(...["r1", "m1", "m2", "dd"].map((id) => positions[id].x));
+    for (const id of ["r2", "c2", "o2"]) expect(positions[id].x).toBeGreaterThan(rightmostOfTree1);
+    expect(positions.o2.x).toBeLessThan(positions.r2.x);
+  });
+
   test("a cycle or a missing first parent still places every chat node exactly once", () => {
     const nodes = [node("a", ["b"], 1), node("b", ["a"], 2), node("c", ["missing"], 3), node("self", ["self"], 4)];
     const positions = layout(nodes);

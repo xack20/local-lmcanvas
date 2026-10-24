@@ -59,6 +59,19 @@ describe("buildPlanRequest", () => {
   });
 });
 
+describe("buildPlanRequest with drafts", () => {
+  test("an unsent blank node is left out of the request, so it gets no title", () => {
+    const root = node("root", [], 1);
+    const draft = { id: "draft", type: "custom", position: { x: 0, y: 0 }, data: { chat: { parentIds: ["root"], childIds: [], messages: [] } } };
+
+    const { request, aliasToId } = buildPlanRequest([root, draft]);
+
+    expect(Object.values(aliasToId)).toEqual(["root"]);
+    expect(request.nodes).toHaveLength(1);
+    expect(request.nodes[0].children).toEqual([]);
+  });
+});
+
 describe("validatePlanReply", () => {
   const request = {
     nodes: [

@@ -155,6 +155,12 @@ export function resolveCollisions(
  * and falls back to FALLBACK_NODE_HEIGHT when the element isn't mounted yet.
  * `zoom` is needed because react-flow's transform scales the rendered height.
  */
+/** Like `makeDomHeightMeasurer`, but reads the zoom when it measures: Organize measures after a
+ *  wait of a minute or more, and the user may have zoomed since it started. */
+export function makeLiveHeightMeasurer(getZoom: () => number): (id: NodeId) => number {
+  return (id) => makeDomHeightMeasurer(getZoom())(id);
+}
+
 export function makeDomHeightMeasurer(zoom: number): (id: NodeId) => number {
   return (id: NodeId): number => {
     if (typeof document === "undefined") return FALLBACK_NODE_HEIGHT;

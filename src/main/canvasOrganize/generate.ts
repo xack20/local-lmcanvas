@@ -10,6 +10,16 @@ const ORGANIZE_MODEL = "haiku";
 
 const SYSTEM_PROMPT = "You output one JSON object only. No prose, no markdown fences.";
 
+// The answer has an entry per node, so time grows with the canvas: a 29-node canvas took 87 s.
+const TIMEOUT_BASE_MS = 60_000;
+const TIMEOUT_PER_NODE_MS = 4_000;
+const TIMEOUT_MAX_MS = 600_000;
+
+/** How long to wait for a plan for a canvas of `nodeCount` nodes before giving up. */
+export function organizeTimeoutMs(nodeCount: number): number {
+  return Math.min(TIMEOUT_MAX_MS, TIMEOUT_BASE_MS + TIMEOUT_PER_NODE_MS * Math.max(0, nodeCount));
+}
+
 function organizePrompt(request: OrganizePlanRequest): string {
   return `You are organizing a canvas: a tree of branching AI chats. Each node is one exchange (the user's prompt and the start of the reply). A node's children are follow-ups that branched from it, oldest first. The canvas will be laid out with one main line running straight down, deep dives in columns to the right, and off-topic branches to the left.
 

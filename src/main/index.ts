@@ -13,7 +13,7 @@ import {
 import { readSettings, writeBrowserAccess, writeSettings } from "./storage/settings";
 import { ROOT_DIR } from "./storage/paths";
 import { exportCanvasToFile, importCanvasFromFile } from "./storage/canvasShareFiles";
-import { planCanvasOrganize } from "./canvasOrganize/generate";
+import { organizeTimeoutMs, planCanvasOrganize } from "./canvasOrganize/generate";
 import type { OrganizePlanRequest } from "@shared/canvasOrganize";
 import { SHARE_EXTENSION, SHARE_REFUSAL_TEXT, shareFileName } from "@shared/canvasShare";
 import { buildPromptWithHistory } from "./claude/history";
@@ -260,8 +260,6 @@ const SHARE_FILE_FILTER = { name: "LMCanvas canvas", extensions: [SHARE_EXTENSIO
 
 // A stuck naming call would leave a Claude process behind; a canvas just keeps its name.
 const CANVAS_NAME_TIMEOUT_MS = 60_000;
-// Organizing reads and titles every node of a canvas: a 29-node canvas took 87 s.
-const CANVAS_ORGANIZE_TIMEOUT_MS = 180_000;
 
 const FILES_CACHE_TTL_MS = 10_000;
 const filesCache = new Map<string, { at: number; files: FileEntry[] }>();
@@ -905,7 +903,8 @@ function registerIpc(): void {
     async (_client, request: OrganizePlanRequest) => {
       const binPath = claudeBinPathOf(await readSettings());
       try {
-        return await planCanvasOrganize(request, { binPath, signal: AbortSignal.timeout(CANVAS_ORGANIZE_TIMEOUT_MS) });
+        const nodeCount = Array.isArray(request?.nodes) ? request.nodes.length : 0;
+        return await planCanvasOrganize(request, { binPath, signal: AbortSignal.timeout(organizeTimeoutMs(nodeCount)) });
       } catch (err) {
         console.error("[canvasOrganize:plan] failed:", err);
         return null;

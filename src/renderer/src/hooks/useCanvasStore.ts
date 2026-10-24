@@ -49,6 +49,7 @@ import {
   NODE_WIDTH,
   ORGANIZE_GAP_X,
   ORGANIZE_GAP_Y,
+  ORGANIZE_TITLE_LINE_HEIGHT,
   VERTICAL_CHILD_OFFSET,
 } from "@/lib/canvasConstants";
 import {
@@ -634,7 +635,12 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         }
         set((cur) => {
           const current = Object.values(cur.nodes);
-          const sizeOf = (n: CanvasNode) => ({ width: n.data.width ?? NODE_WIDTH, height: measureHeight(n.id) });
+          // Heights are measured now, but nodes gain or lose their title line once this plan applies.
+          const titleLine = (p: OrganizePlan | undefined, id: NodeId) => (p?.[id]?.title ? ORGANIZE_TITLE_LINE_HEIGHT : 0);
+          const sizeOf = (n: CanvasNode) => ({
+            width: n.data.width ?? NODE_WIDTH,
+            height: measureHeight(n.id) + titleLine(plan, n.id) - titleLine(cur.organized?.plan, n.id),
+          });
           const placed = layoutCanvas(current, plan, sizeOf, { x: ORGANIZE_GAP_X, y: ORGANIZE_GAP_Y });
           const nodes = Object.fromEntries(
             current.map((n) => {
@@ -643,7 +649,8 @@ export function createCanvasStoreApi(): CanvasStoreApi {
               return [n.id, position ? { ...n, position, data: title ? { ...n.data, title } : n.data } : n];
             }),
           );
-          const organized = { fingerprint: organizeFingerprint(current), plan, undo: snapshotFor(current, cur.organized) };
+          // The plan only knows the nodes it was asked about, so anything added during the wait counts as a change.
+          const organized = { fingerprint: organizeFingerprint(before), plan, undo: snapshotFor(current, cur.organized) };
           return { nodes, organized };
         });
         get().markDirty();
