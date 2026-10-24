@@ -114,6 +114,9 @@ export type ChatData = {
   /** Provider-native conversation state captured after this node completes. */
   providerSession?: ProviderSessionRef;
   addedContext?: string;
+  /** The merge context sent in front of this node's first prompt ("" when it had none), so a replay
+   *  repeats what the model saw. Missing on nodes from before it was recorded. */
+  sentMergeContext?: string;
   /** When true, the node auto-deletes 10s after its assistant message completes,
    *  unless hovered (hover resets the countdown). Set when the user creates a
    *  follow-up via the Timer half of the selection split-button. */

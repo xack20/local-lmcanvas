@@ -150,6 +150,20 @@ describe("stripImageMetadata", () => {
     expect(out[20] & 0x10).toBe(0x10);
   });
 
+  test("a PNG with bytes after its end keeps the image and drops the extra bytes", () => {
+    const png = [
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ...pngChunk("IHDR", [0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]),
+      ...pngChunk("IDAT", [9, 9, 9]),
+      ...pngChunk("IEND", []),
+    ];
+
+    const out = stripImageMetadata({ type: "image", mediaType: "image/png", base64: b64([...png, 0x0a, ...ascii("GPS trailer")]) });
+
+    expect(out).not.toBeNull();
+    expect(bytesOf(out)).toEqual(png);
+  });
+
   test("a GIF is returned unchanged", () => {
     const gif = { type: "image", mediaType: "image/gif", base64: b64(ascii("GIF89a....")) };
     expect(stripImageMetadata(gif)).toEqual(gif);

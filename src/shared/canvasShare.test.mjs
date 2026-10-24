@@ -268,6 +268,45 @@ describe("fromShareFile", () => {
     const result = fromShareFile({ format: "lmcanvas", version: 1, exportedAt: 1, canvas: { name: "   ", nodes: [], edges: [] } }, counter());
     expect(result.canvas.name).toBe("Imported canvas");
   });
+
+  test("an imported canvas named Untitled canvas is renamed, since the list hides that name", () => {
+    const result = fromShareFile({ format: "lmcanvas", version: 1, exportedAt: 1, canvas: { name: "Untitled Canvas", nodes: [], edges: [] } }, counter());
+    expect(result.canvas.name).toBe("Imported canvas");
+  });
+
+  test("imported edges use the app's own edge ids, without duplicates or self-loops", () => {
+    const chat = { parentIds: [], childIds: [], messages: [] };
+    const result = fromShareFile(
+      {
+        format: "lmcanvas",
+        version: 1,
+        exportedAt: 1,
+        canvas: {
+          name: "Edges",
+          nodes: [
+            { id: "A", type: "custom", position: { x: 0, y: 0 }, data: { chat } },
+            { id: "B", type: "custom", position: { x: 0, y: 300 }, data: { chat } },
+          ],
+          edges: [
+            { id: "e1", source: "A", target: "B" },
+            { id: "e2", source: "A", target: "B" },
+            { id: "e3", source: "B", target: "B" },
+          ],
+        },
+      },
+      counter(),
+    );
+    const [a, b] = result.canvas.nodes;
+    expect(result.canvas.edges).toEqual([{ id: `e-${a.id}-${b.id}`, source: a.id, target: b.id }]);
+  });
+
+  test("the merge context a node was sent with survives export and import", () => {
+    const original = canvas();
+    const withMerge = { ...original, nodes: original.nodes.map((n) => (n.id === "kid" ? { ...n, data: { ...n.data, chat: { ...n.data.chat, sentMergeContext: "Conversation 1: …" } } } : n)) };
+    const exported = JSON.parse(JSON.stringify(toShareFile(withMerge, 99)));
+    const imported = fromShareFile(exported, counter()).canvas;
+    expect(imported.nodes.map((n) => n.data.chat.sentMergeContext).filter(Boolean)).toEqual(["Conversation 1: …"]);
+  });
 });
 
 describe("shareFileName", () => {
@@ -276,5 +315,8 @@ describe("shareFileName", () => {
     expect(shareFileName("a\\b*c?d\"e<f>g|h")).toBe("a-b-c-d-e-f-g-h.lmcanvas");
     expect(shareFileName("")).toBe("Canvas.lmcanvas");
     expect(shareFileName("Java threads")).toBe("Java threads.lmcanvas");
+    // A leading dot would hide the file in Finder.
+    expect(shareFileName(".env notes")).toBe("env notes.lmcanvas");
+    expect(shareFileName("..")).toBe("Canvas.lmcanvas");
   });
 });

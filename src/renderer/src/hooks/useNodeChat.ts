@@ -60,6 +60,11 @@ export function useNodeChat(nodeId: NodeId) {
           .filter((n): n is CanvasNode => Boolean(n));
         mergeContext = buildMergeContext(parents);
       }
+      // Keep what goes in front of a node's first prompt, so a replay repeats it instead of guessing
+      // from the parents as they are by then ("" records that there was none).
+      if (nodeBeforeSubmit && nodeBeforeSubmit.data.chat.messages.length === 0) {
+        store.patchNode(nodeId, { chat: { ...nodeBeforeSubmit.data.chat, sentMergeContext: mergeContext } });
+      }
       const userMsgId = nanoid();
       const userBlocks: ContentBlock[] = [];
       if (trimmed) {

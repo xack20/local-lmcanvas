@@ -329,7 +329,8 @@ function registerIpc(): void {
           filters: [SHARE_FILE_FILTER],
         });
         if (picked.canceled || !picked.filePath) return { status: "canceled" };
-        await exportCanvasToFile(id, picked.filePath);
+        // The canvas could be deleted while the Save dialog is open.
+        if (!(await exportCanvasToFile(id, picked.filePath))) throw new Error("This canvas no longer exists.");
         return { status: "saved" };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

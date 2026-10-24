@@ -12,10 +12,8 @@ import type {
   UsageSummary,
 } from "./types";
 
-export function getMessageHistoryForNode(
-  nodeId: NodeId,
-  nodesById: Record<NodeId, CanvasNode>
-): Message[] {
+/** The node and its conversation ancestors (first parents), root first. */
+function chainForNode(nodeId: NodeId, nodesById: Record<NodeId, CanvasNode>): CanvasNode[] {
   const chain: CanvasNode[] = [];
   const seen = new Set<NodeId>();
   let current: CanvasNode | undefined = nodesById[nodeId];
@@ -25,7 +23,14 @@ export function getMessageHistoryForNode(
     const parentId: NodeId | undefined = current.data.chat.parentIds[0];
     current = parentId ? nodesById[parentId] : undefined;
   }
-  return chain.flatMap((n) => n.data.chat.messages);
+  return chain;
+}
+
+export function getMessageHistoryForNode(
+  nodeId: NodeId,
+  nodesById: Record<NodeId, CanvasNode>
+): Message[] {
+  return chainForNode(nodeId, nodesById).flatMap((n) => n.data.chat.messages);
 }
 
 /** Selected text a branch was made from, quoted the way it goes in front of the prompt. */
@@ -34,25 +39,26 @@ export function quoteForPrompt(addedContext: string): string {
 }
 
 /** The branch as a replay sends it: like `getMessageHistoryForNode`, but each node's first prompt
- *  carries the merge context and quoted selection that were sent with it and never stored. */
+ *  carries the merge context and quoted selection that were sent in front of it. */
 export function getReplayHistoryForNode(
   nodeId: NodeId,
   nodesById: Record<NodeId, CanvasNode>
 ): Message[] {
-  const chain = getMessageHistoryForNode(nodeId, nodesById);
-  const prefixes = new Map<string, string>();
-  for (const node of Object.values(nodesById)) {
-    const { parentIds, addedContext, messages } = node.data.chat;
-    const firstPrompt = messages.find((m) => m.role === "user");
-    if (!firstPrompt) continue;
-    const parents = parentIds.flatMap((id) => (nodesById[id] ? [nodesById[id]] : []));
-    const merge = parentIds.length > 1 ? buildMergeContext(parents) : "";
+  return chainForNode(nodeId, nodesById).flatMap((node) => {
+    const { parentIds, addedContext, sentMergeContext, messages } = node.data.chat;
+    // Older nodes didn't record what was sent, so their merge context is rebuilt from the parents.
+    const merge =
+      typeof sentMergeContext === "string"
+        ? sentMergeContext
+        : parentIds.length > 1
+          ? buildMergeContext(parentIds.flatMap((id) => (nodesById[id] ? [nodesById[id]] : [])))
+          : "";
     const prefix = [merge && `${merge}\n\n---`, addedContext && quoteForPrompt(addedContext)].filter(Boolean).join("\n\n");
-    if (prefix) prefixes.set(firstPrompt.id, prefix);
-  }
-  return chain.map((m) => {
-    const prefix = prefixes.get(m.id);
-    return prefix ? { ...m, blocks: [{ type: "text", text: prefix } satisfies TextBlock, ...m.blocks] } : m;
+    const first = messages.findIndex((m) => m.role === "user");
+    if (!prefix || first < 0) return messages;
+    // Ends with a newline so the prompt follows after a blank line, as it was sent.
+    const lead = { type: "text", text: `${prefix}\n` } satisfies TextBlock;
+    return messages.map((m, i) => (i === first ? { ...m, blocks: [lead, ...m.blocks] } : m));
   });
 }
 

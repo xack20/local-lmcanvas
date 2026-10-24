@@ -22,7 +22,10 @@ export async function importCanvasFromFile(
   filePath: string,
   maxBytes = SHARE_MAX_BYTES,
 ): Promise<{ status: "imported"; canvasId: string } | { status: "refused"; reason: ShareRefusal }> {
-  if ((await stat(filePath)).size > maxBytes) return { status: "refused", reason: "too-large" };
+  const info = await stat(filePath);
+  // A pipe or a device reports a small size but may never finish reading.
+  if (!info.isFile()) return { status: "refused", reason: "not-lmcanvas" };
+  if (info.size > maxBytes) return { status: "refused", reason: "too-large" };
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(filePath, "utf-8"));

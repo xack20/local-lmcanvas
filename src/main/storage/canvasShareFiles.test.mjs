@@ -1,7 +1,8 @@
 // .mjs keeps the bun:test import out of `bun run typecheck`.
 // Run this file on its own: it redirects HOME before importing the storage modules.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -105,6 +106,19 @@ describe("canvas share files", () => {
     expect(await shareFiles.importCanvasFromFile(file, 10)).toEqual({ status: "refused", reason: "too-large" });
     expect(canvasFiles()).toEqual(before);
   });
+
+  test("something that isn't a regular file is refused without being read", async () => {
+    // A pipe reports size 0 and a read would wait forever; /dev/zero would never end.
+    const pipe = join(home, "a-pipe.lmcanvas");
+    execFileSync("mkfifo", [pipe]);
+    const folder = join(home, "a-folder.lmcanvas");
+    mkdirSync(folder);
+    const before = canvasFiles();
+
+    expect(await shareFiles.importCanvasFromFile(pipe)).toEqual({ status: "refused", reason: "not-lmcanvas" });
+    expect(await shareFiles.importCanvasFromFile(folder)).toEqual({ status: "refused", reason: "not-lmcanvas" });
+    expect(canvasFiles()).toEqual(before);
+  }, 2_000);
 
   test("a file that isn't JSON is refused as not an LMCanvas file and nothing is written", async () => {
     const file = join(home, "notes.lmcanvas");

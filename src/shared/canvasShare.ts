@@ -8,6 +8,7 @@ import type {
   ToolUseBlock,
 } from "./types";
 import { migrateMessage } from "./history";
+import { isUnnamedCanvasName } from "./canvasName";
 import { stripImageMetadata } from "./imageMetadata";
 
 /** A canvas shared as a file: only its questions and answers, laid out as they were. */
@@ -53,8 +54,9 @@ export function toShareFile(canvas: Canvas, exportedAt: number): ShareFile {
 
 /** The default file name for a canvas: never a path, never empty. */
 export function shareFileName(canvasName: string): string {
+  // A leading dot would hide the file in Finder and in most file dialogs.
   // eslint-disable-next-line no-control-regex
-  const safe = canvasName.replace(/[/\\:*?"<>|\u0000-\u001f]/g, "-").trim();
+  const safe = canvasName.replace(/[/\\:*?"<>|\u0000-\u001f]/g, "-").trim().replace(/^\.+/, "").trim();
   return `${safe || "Canvas"}.${SHARE_EXTENSION}`;
 }
 
@@ -79,14 +81,16 @@ export function fromShareFile(
     idMap.set(n.id, newId());
     kept.push(n);
   }
-  const name = typeof canvas.name === "string" && canvas.name.trim() ? canvas.name : IMPORTED_NAME;
+  // The canvas list hides unnamed canvases, so an import must never arrive under such a name.
+  const name = typeof canvas.name === "string" && !isUnnamedCanvasName(canvas.name) ? canvas.name : IMPORTED_NAME;
+  const seenEdges = new Set<string>();
   return {
     ok: true,
     canvas: {
       name,
       nameSource: "auto",
       nodes: kept.map((n) => importNode(n, idMap)),
-      edges: (Array.isArray(canvas.edges) ? canvas.edges : []).flatMap((e) => importEdge(e, idMap, newId)),
+      edges: (Array.isArray(canvas.edges) ? canvas.edges : []).flatMap((e) => importEdge(e, idMap, seenEdges)),
     },
   };
 }
@@ -105,6 +109,7 @@ function shareNode(n: CanvasNode): CanvasNode {
         parentIds: chat.parentIds,
         childIds: chat.childIds,
         ...(chat.addedContext ? { addedContext: chat.addedContext } : {}),
+        ...(chat.sentMergeContext !== undefined ? { sentMergeContext: chat.sentMergeContext } : {}),
         messages: chat.messages.map(shareMessage),
       },
     },
@@ -203,6 +208,7 @@ function importNode(n: ValidNode, idMap: Map<string, string>): CanvasNode {
         parentIds: known(chat.parentIds),
         childIds: known(chat.childIds),
         ...(typeof chat.addedContext === "string" ? { addedContext: chat.addedContext } : {}),
+        ...(typeof chat.sentMergeContext === "string" ? { sentMergeContext: chat.sentMergeContext } : {}),
         messages: (Array.isArray(chat.messages) ? chat.messages : []).flatMap(importMessage),
       },
     },
@@ -225,14 +231,18 @@ function importBlock(b: unknown): ContentBlock[] {
   return [];
 }
 
-function importEdge(e: unknown, idMap: Map<string, string>, newId: () => string): CanvasEdge[] {
+/** An edge between two kept nodes, under the id the app itself gives an edge (`e-source-target`), so
+ *  connecting the same two nodes again later doesn't add a second line. Duplicates and self-loops go. */
+function importEdge(e: unknown, idMap: Map<string, string>, seen: Set<string>): CanvasEdge[] {
   if (!isRecord(e) || typeof e.source !== "string" || typeof e.target !== "string") return [];
   const source = idMap.get(e.source);
   const target = idMap.get(e.target);
-  if (!source || !target) return [];
+  const id = `e-${source}-${target}`;
+  if (!source || !target || source === target || seen.has(id)) return [];
+  seen.add(id);
   return [
     {
-      id: newId(),
+      id,
       source,
       target,
       ...(typeof e.sourceHandle === "string" ? { sourceHandle: e.sourceHandle } : {}),

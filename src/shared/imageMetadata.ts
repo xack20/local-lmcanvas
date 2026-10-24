@@ -97,7 +97,10 @@ function stripPng(b: Uint8Array): Uint8Array | null {
     if (i + 12 > b.length) return null;
     const end = i + 12 + readU32BE(b, i);
     if (end > b.length) return null;
-    if (!PNG_DROP.has(ascii(b, i + 4, 4))) keep.push(b.subarray(i, end));
+    const type = ascii(b, i + 4, 4);
+    if (!PNG_DROP.has(type)) keep.push(b.subarray(i, end));
+    // Anything after the end chunk isn't part of the picture.
+    if (type === "IEND") return concat(keep);
     i = end;
   }
   return concat(keep);
