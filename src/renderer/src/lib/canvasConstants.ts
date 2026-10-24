@@ -25,6 +25,11 @@ export const VERTICAL_CHILD_OFFSET = 150;
 // match the existing CustomNode fallback.
 export const FALLBACK_NODE_HEIGHT = 300;
 
+// Organize: columns start NODE_WIDTH + ORGANIZE_GAP_X apart (1200 px, as in the 10-17 hand layout),
+// and nodes in a column sit ORGANIZE_GAP_Y below the one above.
+export const ORGANIZE_GAP_X = 100;
+export const ORGANIZE_GAP_Y = 80;
+
 // Camera defaults
 export const FOCUS_ZOOM = 1.5;
 export const FOCUS_DURATION_MS = 800;

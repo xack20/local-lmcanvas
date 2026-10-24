@@ -13,6 +13,8 @@ import type {
   ErrorCode,
   Message,
   ModelFallback,
+  CanvasOrganized,
+  OrganizePlan,
   NameSource,
   NodeId,
   NodeSettings,
@@ -42,7 +44,26 @@ import type { Attachment, CanvasLockResult } from "@shared/ipc";
 import { isCanvasLockedError } from "@shared/canvasLock";
 import { getEdgeHandles } from "@/lib/edgeHandles";
 import type { CanvasLockState, LockHolderKind } from "@/lib/lockText";
-import { FALLBACK_NODE_HEIGHT, VERTICAL_CHILD_OFFSET } from "@/lib/canvasConstants";
+import {
+  FALLBACK_NODE_HEIGHT,
+  NODE_WIDTH,
+  ORGANIZE_GAP_X,
+  ORGANIZE_GAP_Y,
+  VERTICAL_CHILD_OFFSET,
+} from "@/lib/canvasConstants";
+import {
+  buildPlanRequest,
+  organizeFingerprint,
+  planFromAliases,
+  restoreFromUndo,
+  snapshotFor,
+  type AliasPlan,
+} from "@shared/canvasOrganize";
+import { layoutCanvas } from "@shared/canvasLayout";
+
+const ORGANIZE_WAIT_FOR_REPLY = "Wait for the reply to finish, then organize.";
+const ORGANIZE_NO_ANSWER = "Couldn't organize this canvas. Claude didn't answer.";
+const ORGANIZE_REPLY_STARTED = "A reply started while organizing. Try again when it finishes.";
 import { keyboardBranchPosition } from "@/lib/childPlacement";
 import { useRecentsStore } from "@/hooks/useRecentsStore";
 import { createCanvasLockClaim, isCanvasLockClaimed, type CanvasLockClaim } from "@/lib/lockClaims";
@@ -107,6 +128,16 @@ export type CanvasStoreState = {
   rename: (typed: string) => void;
   /** Ask Claude for a name that says what this canvas is about, unless the user named it. */
   autoName: () => Promise<void>;
+  /** Set by Organize: the plan it applied and the way back. */
+  organized: CanvasOrganized | undefined;
+  /** Waiting for Claude's organize plan. */
+  organizing: boolean;
+  organizeError: string | null;
+  /** Lay the canvas out from an organize plan (reused when nothing changed, else asked of Claude)
+   *  and title its nodes. Heights come from `measureHeight`, since only the screen knows them. */
+  organize: (measureHeight: (id: NodeId) => number) => Promise<void>;
+  /** Put positions and titles back as they were before the first organize, and forget the plan. */
+  undoOrganize: () => void;
   setProvider: (provider: Provider) => void;
   /** Merge a patch into `node.data.nodeSettings`. Per-node overrides for run settings. */
   setNodeSettings: (nodeId: NodeId, patch: Partial<NodeSettings>) => void;
@@ -226,6 +257,7 @@ function canvasFromState(s: CanvasStoreState): Canvas | null {
     id: s.canvasId,
     name: s.name,
     ...(s.nameSource ? { nameSource: s.nameSource } : {}),
+    ...(s.organized ? { organized: s.organized } : {}),
     createdAt: s.createdAt,
     updatedAt: Date.now(),
     nodes: Object.values(s.nodes).map(withoutTransientSelection),
@@ -316,6 +348,9 @@ export function createCanvasStoreApi(): CanvasStoreApi {
       canvasId: null,
       name: "",
       nameSource: undefined,
+      organized: undefined,
+      organizing: false,
+      organizeError: null,
       cwd: undefined,
       createdAt: 0,
       provider: undefined,
@@ -479,6 +514,9 @@ export function createCanvasStoreApi(): CanvasStoreApi {
           canvasId: canvas.id,
           name: canvas.name,
           nameSource: canvas.nameSource,
+          organized: canvas.organized,
+          organizing: false,
+          organizeError: null,
           cwd: canvas.cwd,
           createdAt: canvas.createdAt,
           provider: canvas.provider,
@@ -556,6 +594,74 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         get().markDirty();
         await get().save();
         window.dispatchEvent(new Event("lmc:canvases-changed"));
+      },
+
+      organize: async (measureHeight) => {
+        const s = get();
+        const canvasId = s.canvasId;
+        if (!canvasId || s.lock !== "held") return;
+        if (isReplyRunning(s)) {
+          set({ organizeError: ORGANIZE_WAIT_FOR_REPLY });
+          return;
+        }
+        set({ organizeError: null });
+        const before = Object.values(s.nodes);
+        let plan: OrganizePlan;
+        if (s.organized && s.organized.fingerprint === organizeFingerprint(before)) {
+          plan = s.organized.plan;
+        } else {
+          const { request, aliasToId } = buildPlanRequest(before, s.organized?.plan);
+          set({ organizing: true });
+          let reply: AliasPlan | null = null;
+          try {
+            reply = await window.api.canvasOrganize.plan(request);
+          } catch (err) {
+            console.warn("Organize plan failed:", err);
+          }
+          set({ organizing: false });
+          const now = get();
+          // The pane moved to another canvas while Claude was working: this result is for nothing on screen.
+          if (now.canvasId !== canvasId) return;
+          if (!reply) {
+            set({ organizeError: ORGANIZE_NO_ANSWER });
+            return;
+          }
+          if (isReplyRunning(now)) {
+            set({ organizeError: ORGANIZE_REPLY_STARTED });
+            return;
+          }
+          plan = planFromAliases(reply, aliasToId);
+        }
+        set((cur) => {
+          const current = Object.values(cur.nodes);
+          const sizeOf = (n: CanvasNode) => ({ width: n.data.width ?? NODE_WIDTH, height: measureHeight(n.id) });
+          const placed = layoutCanvas(current, plan, sizeOf, { x: ORGANIZE_GAP_X, y: ORGANIZE_GAP_Y });
+          const nodes = Object.fromEntries(
+            current.map((n) => {
+              const position = placed[n.id];
+              const title = plan[n.id]?.title;
+              return [n.id, position ? { ...n, position, data: title ? { ...n.data, title } : n.data } : n];
+            }),
+          );
+          const organized = { fingerprint: organizeFingerprint(current), plan, undo: snapshotFor(current, cur.organized) };
+          return { nodes, organized };
+        });
+        get().markDirty();
+        await get().save();
+        window.dispatchEvent(new Event("lmc:canvases-changed"));
+      },
+
+      undoOrganize: () => {
+        const { organized } = get();
+        if (!organized) return;
+        set((s) => ({
+          nodes: Object.fromEntries(restoreFromUndo(Object.values(s.nodes), organized).map((n) => [n.id, n])),
+          organized: undefined,
+        }));
+        get().markDirty();
+        void get()
+          .save()
+          .then(() => window.dispatchEvent(new Event("lmc:canvases-changed")));
       },
 
       setProvider: (provider) => {
