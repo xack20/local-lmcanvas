@@ -1,8 +1,12 @@
 import type { ImageBlock } from "./types";
 
 // Sections that can carry who, where and when a picture was taken. Colour profiles stay.
-const JPEG_DROP = new Set([0xe1 /* EXIF, XMP */, 0xed /* IPTC */, 0xfe /* comment */]);
+// EXIF (APP1) is rebuilt with only its Orientation; XMP shares the marker and goes.
+const JPEG_EXIF = 0xe1;
+const JPEG_DROP = new Set([0xed /* IPTC */, 0xfe /* comment */]);
 const JPEG_SOS = 0xda;
+const JPEG_EOI = 0xd9;
+const EXIF_ORIENTATION = 0x0112;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const PNG_DROP = new Set(["eXIf", "tEXt", "zTXt", "iTXt", "tIME"]);
 const WEBP_DROP = new Set(["EXIF", "XMP "]);
@@ -25,15 +29,63 @@ function stripJpeg(b: Uint8Array): Uint8Array | null {
   if (b[0] !== 0xff || b[1] !== 0xd8) return null;
   const keep = [b.subarray(0, 2)];
   let i = 2;
-  while (i + 4 <= b.length) {
-    if (b[i] !== 0xff) return null;
+  let scanFrom = -1;
+  while (i < b.length) {
+    if (scanFrom >= 0) {
+      // Picture data: FF00 is an escaped byte, FFD0-FFD7 restart markers, FFFF padding.
+      const next = b[i + 1];
+      if (b[i] !== 0xff || next === 0x00 || next === 0xff || (next >= 0xd0 && next <= 0xd7)) {
+        i++;
+        continue;
+      }
+      keep.push(b.subarray(scanFrom, i));
+      scanFrom = -1;
+    }
+    if (b[i] !== 0xff || i + 1 >= b.length) return null;
     const marker = b[i + 1];
+    // A phone can append a second picture or a video after the end of the image.
+    if (marker === JPEG_EOI) return concat([...keep, b.subarray(i, i + 2)]);
+    if (i + 4 > b.length) return null;
     const end = i + 2 + ((b[i + 2] << 8) | b[i + 3]);
     if (end < i + 4 || end > b.length) return null;
-    // Everything from the start of scan on is the picture itself.
-    if (marker === JPEG_SOS) return concat([...keep, b.subarray(i)]);
-    if (!JPEG_DROP.has(marker)) keep.push(b.subarray(i, end));
+    const segment = b.subarray(i, end);
+    if (marker === JPEG_EXIF) {
+      const orientation = orientationSegment(segment);
+      if (orientation) keep.push(orientation);
+    } else if (!JPEG_DROP.has(marker)) {
+      keep.push(segment);
+    }
+    if (marker === JPEG_SOS) scanFrom = end;
     i = end;
+  }
+  // No end-of-image marker: keep the picture data the file does have.
+  return scanFrom >= 0 ? concat([...keep, b.subarray(scanFrom)]) : null;
+}
+
+/** A replacement EXIF segment holding only Orientation, so a turned photo still shows upright;
+ *  null when the segment isn't EXIF or the picture is already upright. */
+function orientationSegment(segment: Uint8Array): Uint8Array | null {
+  const tiff = segment.subarray(4 + 6);
+  if (ascii(segment, 4, 6) !== "Exif\0\0" || tiff.length < 8) return null;
+  const big = ascii(tiff, 0, 2) === "MM";
+  if (!big && ascii(tiff, 0, 2) !== "II") return null;
+  const u16 = (k: number) => (big ? (tiff[k] << 8) | tiff[k + 1] : tiff[k] | (tiff[k + 1] << 8));
+  const ifd = big ? readU32BE(tiff, 4) : readU32LE(tiff, 4);
+  if (ifd + 2 > tiff.length) return null;
+  for (let k = 0; k < u16(ifd); k++) {
+    const entry = ifd + 2 + k * 12;
+    if (entry + 12 > tiff.length) return null;
+    if (u16(entry) !== EXIF_ORIENTATION) continue;
+    const value = u16(entry + 8);
+    if (value < 2 || value > 8) return null;
+    // Big-endian TIFF, one IFD0 entry (SHORT, count 1), no next IFD.
+    const payload = [
+      ...[0x45, 0x78, 0x69, 0x66, 0, 0],
+      ...[0x4d, 0x4d, 0, 0x2a, 0, 0, 0, 8],
+      ...[0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, value, 0, 0],
+      ...[0, 0, 0, 0],
+    ];
+    return Uint8Array.from([0xff, JPEG_EXIF, 0, payload.length + 2, ...payload]);
   }
   return null;
 }
