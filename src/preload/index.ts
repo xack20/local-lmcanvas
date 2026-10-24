@@ -21,6 +21,8 @@ const api: LmcApi = {
     read: (id) => ipcRenderer.invoke("canvases:read", id),
     write: (canvas: Canvas) => ipcRenderer.invoke("canvases:write", canvas),
     delete: (id) => ipcRenderer.invoke("canvases:delete", id),
+    exportToFile: (id) => ipcRenderer.invoke("canvases:exportToFile", id),
+    importFromFile: () => ipcRenderer.invoke("canvases:importFromFile"),
   },
   settings: {
     read: () => ipcRenderer.invoke("settings:read"),

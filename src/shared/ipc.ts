@@ -1,3 +1,4 @@
+import type { ShareRefusal } from "./canvasShare";
 import type {
   AppSettings,
   Canvas,
@@ -192,6 +193,16 @@ export type GenerateGroupSummaryRequest = {
   existingGroupTitles?: string[];
 };
 
+export type CanvasExportResult =
+  | { status: "saved" }
+  | { status: "canceled" }
+  | { status: "failed"; message: string };
+
+export type CanvasImportResult =
+  | { status: "imported"; canvasId: string }
+  | { status: "canceled" }
+  | { status: "refused"; reason: ShareRefusal };
+
 export type GenerateCanvasNameRequest = {
   /** Every prompt on the canvas, oldest first, cut short. */
   prompts: string[];
@@ -251,6 +262,10 @@ export type LmcApi = {
     read(id: string): Promise<Canvas | null>;
     write(canvas: Canvas): Promise<void>;
     delete(id: string): Promise<void>;
+    /** Save a canvas's questions and answers to a .lmcanvas file the user picks. Desktop only. */
+    exportToFile(id: string): Promise<CanvasExportResult>;
+    /** Add a .lmcanvas file the user picks as a new canvas. Desktop only. */
+    importFromFile(): Promise<CanvasImportResult>;
   };
   settings: {
     read(): Promise<AppSettings>;

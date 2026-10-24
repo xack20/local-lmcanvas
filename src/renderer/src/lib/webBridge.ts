@@ -339,6 +339,9 @@ export function createWebApi(deps: WebBridgeDeps): LmcApi {
       read: (id) => call("canvases:read", id),
       write: (canvas) => call("canvases:write", canvas),
       delete: (id) => call("canvases:delete", id),
+      // Native file dialogs live on the Mac; the browser hides these buttons.
+      exportToFile: async () => ({ status: "canceled" }),
+      importFromFile: async () => ({ status: "canceled" }),
     },
     settings: {
       read: () => call("settings:read"),

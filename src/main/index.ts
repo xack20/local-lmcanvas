@@ -12,6 +12,8 @@ import {
 } from "./storage/canvases";
 import { readSettings, writeBrowserAccess, writeSettings } from "./storage/settings";
 import { ROOT_DIR } from "./storage/paths";
+import { exportCanvasToFile, importCanvasFromFile } from "./storage/canvasShareFiles";
+import { SHARE_EXTENSION, SHARE_REFUSAL_TEXT, shareFileName } from "@shared/canvasShare";
 import { buildPromptWithHistory } from "./claude/history";
 import { createClaudeModelCatalog } from "./claude/models";
 import { loadModelWindows, type ModelWindows } from "./claude/modelWindows";
@@ -57,6 +59,8 @@ import type {
   CompactArgs,
   CompactResult,
   GenerateCanvasNameRequest,
+  CanvasExportResult,
+  CanvasImportResult,
   PersistentProcessStartArgs,
   FileEntry,
   GenerateGroupSummaryRequest,
@@ -250,6 +254,8 @@ Rules:
 
 const PERSISTENT_PROCESS_INSTRUCTION = `LONG-RUNNING LOCAL PROCESSES: If the user asks you to start a dev server, watcher, preview server, or similar command that should remain available after your response completes, do not rely on a transient agent background job. Start it in a detached/nohup shell with output redirected to a log file, report the PID and log path, and verify the service over HTTP or with an equivalent health check when possible.`;
 
+const SHARE_FILE_FILTER = { name: "LMCanvas canvas", extensions: [SHARE_EXTENSION] };
+
 // A stuck naming call would leave a Claude process behind; a canvas just keeps its name.
 const CANVAS_NAME_TIMEOUT_MS = 60_000;
 
@@ -306,6 +312,49 @@ function registerIpc(): void {
       });
       if (result.canceled || result.filePaths.length === 0) return null;
       return result.filePaths[0];
+    },
+    "desktop-only",
+  );
+
+  api.handle(
+    "canvases:exportToFile",
+    async (_client, id: string): Promise<CanvasExportResult> => {
+      try {
+        const canvas = await readCanvas(id);
+        if (!canvas) throw new Error("This canvas no longer exists.");
+        const picked = await dialog.showSaveDialog({
+          defaultPath: join(app.getPath("downloads"), shareFileName(canvas.name)),
+          filters: [SHARE_FILE_FILTER],
+        });
+        if (picked.canceled || !picked.filePath) return { status: "canceled" };
+        await exportCanvasToFile(id, picked.filePath);
+        return { status: "saved" };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void dialog.showMessageBox({ type: "warning", message: "Couldn't export this canvas.", detail: message });
+        return { status: "failed", message };
+      }
+    },
+    "desktop-only",
+  );
+
+  api.handle(
+    "canvases:importFromFile",
+    async (): Promise<CanvasImportResult> => {
+      const picked = await dialog.showOpenDialog({ properties: ["openFile"], filters: [SHARE_FILE_FILTER] });
+      if (picked.canceled || picked.filePaths.length === 0) return { status: "canceled" };
+      try {
+        const result = await importCanvasFromFile(picked.filePaths[0]);
+        if (result.status === "refused") {
+          void dialog.showMessageBox({ type: "warning", message: SHARE_REFUSAL_TEXT[result.reason] });
+        }
+        return result;
+      } catch (err) {
+        // Nothing was added; the user has been told why.
+        const detail = err instanceof Error ? err.message : String(err);
+        void dialog.showMessageBox({ type: "warning", message: "Couldn't import this file.", detail });
+        return { status: "canceled" };
+      }
     },
     "desktop-only",
   );
