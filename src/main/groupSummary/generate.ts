@@ -295,10 +295,9 @@ export async function generateGroupSummaries(
         model: args.model,
         pathToClaudeCodeExecutable: claudeExecutable(args.binPath),
         systemPrompt: SYSTEM_PROMPT,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        // The candidates are conversation text, so the summarizer gets no tools to act on them with.
+        tools: [],
         settingSources: [],
-        allowedTools: [],
         includePartialMessages: false,
         abortController: controller,
       },
