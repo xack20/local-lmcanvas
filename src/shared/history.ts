@@ -28,6 +28,34 @@ export function getMessageHistoryForNode(
   return chain.flatMap((n) => n.data.chat.messages);
 }
 
+/** Selected text a branch was made from, quoted the way it goes in front of the prompt. */
+export function quoteForPrompt(addedContext: string): string {
+  return `> ${addedContext.replace(/\n/g, "\n> ")}`;
+}
+
+/** The branch as a replay sends it: like `getMessageHistoryForNode`, but each node's first prompt
+ *  carries the merge context and quoted selection that were sent with it and never stored. */
+export function getReplayHistoryForNode(
+  nodeId: NodeId,
+  nodesById: Record<NodeId, CanvasNode>
+): Message[] {
+  const chain = getMessageHistoryForNode(nodeId, nodesById);
+  const prefixes = new Map<string, string>();
+  for (const node of Object.values(nodesById)) {
+    const { parentIds, addedContext, messages } = node.data.chat;
+    const firstPrompt = messages.find((m) => m.role === "user");
+    if (!firstPrompt) continue;
+    const parents = parentIds.flatMap((id) => (nodesById[id] ? [nodesById[id]] : []));
+    const merge = parentIds.length > 1 ? buildMergeContext(parents) : "";
+    const prefix = [merge && `${merge}\n\n---`, addedContext && quoteForPrompt(addedContext)].filter(Boolean).join("\n\n");
+    if (prefix) prefixes.set(firstPrompt.id, prefix);
+  }
+  return chain.map((m) => {
+    const prefix = prefixes.get(m.id);
+    return prefix ? { ...m, blocks: [{ type: "text", text: prefix } satisfies TextBlock, ...m.blocks] } : m;
+  });
+}
+
 export function blocksToPlainText(blocks: ContentBlock[]): string {
   const parts: string[] = [];
   for (const b of blocks) {

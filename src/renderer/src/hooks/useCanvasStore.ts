@@ -24,7 +24,7 @@ import type {
   UsageSummary,
 } from "@shared/types";
 import {
-  getMessageHistoryForNode,
+  getReplayHistoryForNode,
   messageTextForTitle,
   migrateMessage,
 } from "@shared/history";
@@ -169,6 +169,7 @@ export type CanvasStoreState = {
     opts?: { code?: ErrorCode; provider?: Provider }
   ) => void;
   clearMessages: (nodeId: NodeId) => void;
+  /** The branch as a replay sends it, with each node's quoted selection and merge context. */
   getHistoryForNode: (id: NodeId) => Message[];
   serialize: () => Canvas | null;
   markDirty: () => void;
@@ -1088,7 +1089,7 @@ export function createCanvasStoreApi(): CanvasStoreApi {
         get().markDirty();
       },
 
-      getHistoryForNode: (id) => getMessageHistoryForNode(id, get().nodes),
+      getHistoryForNode: (id) => getReplayHistoryForNode(id, get().nodes),
 
       serialize: () => canvasFromState(get()),
 

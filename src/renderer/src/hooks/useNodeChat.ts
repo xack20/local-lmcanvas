@@ -12,7 +12,7 @@ import type {
   ContentBlock,
 } from "@shared/types";
 import type { Attachment, ChatEvent } from "@shared/ipc";
-import { buildMergeContext } from "@shared/history";
+import { buildMergeContext, quoteForPrompt } from "@shared/history";
 import {
   finishedReplyCount,
   isAutoNameCheckpoint,
@@ -331,7 +331,7 @@ export function useNodeChat(nodeId: NodeId) {
       const addedContext =
         storeApi.getState().nodes[nodeId]?.data.chat.addedContext;
       let promptForModel = addedContext
-        ? `> ${addedContext.replace(/\n/g, "\n> ")}\n\n${promptAfterPlanStrip}`
+        ? `${quoteForPrompt(addedContext)}\n\n${promptAfterPlanStrip}`
         : promptAfterPlanStrip;
       if (mergeContext) {
         promptForModel = `${mergeContext}\n\n---\n\n${promptForModel}`;
