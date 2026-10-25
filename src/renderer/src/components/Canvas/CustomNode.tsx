@@ -28,6 +28,7 @@ import { SelectionActionButton } from "./SelectionActionButton";
 import { CustomNodeContextBanner } from "./CustomNodeContextBanner";
 import { TemporaryBadge } from "./TemporaryBadge";
 import { NodeCopyButton } from "./NodeCopyButton";
+import { NodeRegenerateButton } from "./NodeRegenerateButton";
 import { NodeSourceHandles, NodeTargetHandles } from "./NodeHandles";
 import { ResizeHandle } from "./ResizeHandle";
 import { useAskUserStore } from "@/hooks/useAskUserStore";
@@ -119,6 +120,16 @@ function CustomNodeImpl(props: NodeProps) {
     // Idle nodes (nothing submitted yet) delete immediately; otherwise confirm.
     requireConfirm: hasSubmitted,
     onDelete: () => removeNode(id),
+  });
+
+  // Regenerate = resending the prompt unchanged. It replaces the answer, so ask first when other
+  // nodes (branches or merges) were built on it.
+  const hasDependents = useCanvasStore((s) =>
+    Object.values(s.nodes).some((n) => n.data.chat.parentIds.includes(id)),
+  );
+  const regenerateConfirm = useDeleteConfirm({
+    requireConfirm: hasDependents,
+    onDelete: () => promptEdit.commit(userText, userAttachments),
   });
 
   const justFinished = useNodeFinishSound({ nodeId: id, streaming, hovered });
@@ -407,10 +418,16 @@ function CustomNodeImpl(props: NodeProps) {
         {assistantText && (
           <div
             className={clsx(
-              "absolute bottom-2 right-2 nodrag transition-opacity duration-150",
+              "absolute bottom-2 right-2 nodrag flex items-center gap-1 transition-opacity duration-150",
               hovered || selected ? "opacity-100" : "opacity-0 pointer-events-none",
             )}
           >
+            {canEditPrompt && (
+              <NodeRegenerateButton
+                onClick={() => regenerateConfirm.trigger()}
+                confirming={regenerateConfirm.isConfirming}
+              />
+            )}
             <NodeCopyButton text={assistantText} />
           </div>
         )}
