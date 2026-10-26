@@ -176,8 +176,12 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
   let emittedSessionId: string | null = null;
   const agents = backgroundAgentTracker();
   let earlierUsage: UsageSummary | undefined;
+  // A turn that answers an agent's report would otherwise run on from the last turn's text.
+  let turnBreak = false;
 
   const emit = (ev: RunnerEvent): void => {
+    if (ev.kind === "text_delta" && turnBreak) ev = { ...ev, text: `\n\n${ev.text}` };
+    if (ev.kind === "text_delta" || ev.kind === "thinking_delta" || ev.kind === "tool_use") turnBreak = false;
     if (ev.kind === "done") doneEmitted = true;
     if (ev.kind === "response_complete" && agents.running()) return;
     if (ev.kind === "error" && !ev.code && isAuthError(ev.message)) {
@@ -287,6 +291,7 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
       if (systemEvent) emit(systemEvent);
       if (msg.type === "result" && msg.subtype === "success" && !msg.is_error && agents.running()) {
         earlierUsage = addTurnUsage(earlierUsage, resultUsage(msg));
+        turnBreak = true;
         continue;
       }
       if (msg.type === "result" && measuresAfter(msg)) {

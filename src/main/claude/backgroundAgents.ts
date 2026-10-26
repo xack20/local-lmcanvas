@@ -35,7 +35,10 @@ export function backgroundAgentTracker(): BackgroundAgents {
       if (!isRecord(msg) || msg.type !== "system" || typeof msg.task_id !== "string") return;
       if (msg.subtype === "task_started") {
         if (msg.task_type !== "local_agent" || typeof msg.tool_use_id !== "string") return;
-        agentCalls.set(msg.task_id, msg.tool_use_id);
+        // SendMessage revives a finished agent as a new run of the same task, whose messages still
+        // carry the first call's id.
+        finished.delete(msg.task_id);
+        if (!agentCalls.has(msg.task_id)) agentCalls.set(msg.task_id, msg.tool_use_id);
         if (msg.is_backgrounded === true) toBackground(msg.task_id);
       } else if (msg.subtype === "task_updated" && isRecord(msg.patch)) {
         if (msg.patch.is_backgrounded === true) toBackground(msg.task_id);

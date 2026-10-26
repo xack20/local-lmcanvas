@@ -40,6 +40,26 @@ describe("backgroundAgentTracker", () => {
     expect(agents.running()).toBe(false);
   });
 
+  // Event shapes recorded from Claude Code 2.1.310: SendMessage revives a finished agent as a new
+  // task_started run under the same task_id, carrying the SendMessage call's id.
+  test("an agent resumed with SendMessage is waited for again", () => {
+    const agents = backgroundAgentTracker();
+    agents.observe(started("a1", "t1", "local_agent", true));
+    agents.observe(notified("a1"));
+    agents.observe(started("a1", "send1", "local_agent", true));
+    expect(agents.running()).toBe(true);
+    agents.observe(notified("a1"));
+    expect(agents.running()).toBe(false);
+  });
+
+  test("a resumed agent's messages, which carry its first call's id, stay its own", () => {
+    const agents = backgroundAgentTracker();
+    agents.observe(started("a1", "t1", "local_agent", false));
+    agents.observe(notified("a1"));
+    agents.observe(started("a1", "send1", "local_agent", true));
+    expect(agents.ownsMessage(fromAgent("t1"))).toBe(true);
+  });
+
   test("only a background agent's own messages are its", () => {
     const agents = backgroundAgentTracker();
     agents.observe(started("a1", "t1", "local_agent", true));

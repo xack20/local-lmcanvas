@@ -62,6 +62,31 @@ describe("runClaude with a background agent", () => {
     expect(events.filter((e) => e.kind === "done")).toMatchObject([{ result: "Server started." }]);
   });
 
+  test("an agent resumed with SendMessage holds the reply open until it reports again", async () => {
+    const resumed = { ...agentStarted, tool_use_id: "send1" };
+    const events = await run([
+      agentCall, agentStarted, agentDone,
+      main([{ type: "text", text: "Sent it back for a fix." }]),
+      resumed,
+      result("Sent it back for a fix.", {}, 0.1),
+      agentDone,
+      main([{ type: "text", text: "Fixed." }]),
+      result("Fixed.", {}, 0.2),
+    ]);
+    expect(events.filter((e) => e.kind === "done")).toMatchObject([{ result: "Fixed." }]);
+  });
+
+  test("the turn after an agent's report starts a new paragraph", async () => {
+    const delta = (text) => ({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
+    const events = await run([
+      agentCall, agentStarted,
+      delta("Waiting."), main([{ type: "text", text: "Waiting." }]), result("Waiting.", {}, 0.1),
+      agentDone,
+      delta("It passed."), main([{ type: "text", text: "It passed." }]), result("It passed.", {}, 0.2),
+    ]);
+    expect(events.filter((e) => e.kind === "text_delta").map((e) => e.text).join("")).toBe("Waiting.\n\nIt passed.");
+  });
+
   test("an error result still ends the run while an agent is working", async () => {
     const failed = { type: "result", subtype: "error_during_execution", is_error: true, num_turns: 1, errors: ["boom"] };
     const events = await run([agentCall, agentStarted, failed, agentDone, result("never read", {}, 0.1)]);
