@@ -87,6 +87,19 @@ describe("runClaude with a background agent", () => {
     expect(events.filter((e) => e.kind === "text_delta").map((e) => e.text).join("")).toBe("Waiting.\n\nIt passed.");
   });
 
+  test("an empty thinking block at the start of that turn doesn't cancel the new paragraph", async () => {
+    // Opus usually opens the turn that answers a report with a thinking block whose text is empty.
+    const delta = (text) => ({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
+    const thinking = (text) => ({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: text } } });
+    const events = await run([
+      agentCall, agentStarted,
+      delta("Waiting."), main([{ type: "text", text: "Waiting." }]), result("Waiting.", {}, 0.1),
+      agentDone,
+      thinking(""), delta("It passed."), main([{ type: "text", text: "It passed." }]), result("It passed.", {}, 0.2),
+    ]);
+    expect(events.filter((e) => e.kind === "text_delta").map((e) => e.text).join("")).toBe("Waiting.\n\nIt passed.");
+  });
+
   test("an error result still ends the run while an agent is working", async () => {
     const failed = { type: "result", subtype: "error_during_execution", is_error: true, num_turns: 1, errors: ["boom"] };
     const events = await run([agentCall, agentStarted, failed, agentDone, result("never read", {}, 0.1)]);

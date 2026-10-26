@@ -181,7 +181,8 @@ export async function runClaude(prompt: string, opts: RunClaudeOpts): Promise<vo
 
   const emit = (ev: RunnerEvent): void => {
     if (ev.kind === "text_delta" && turnBreak) ev = { ...ev, text: `\n\n${ev.text}` };
-    if (ev.kind === "text_delta" || ev.kind === "thinking_delta" || ev.kind === "tool_use") turnBreak = false;
+    // Empty thinking (how Opus usually opens such a turn) makes no block, so the break still applies.
+    if (ev.kind === "text_delta" || (ev.kind === "thinking_delta" && ev.text) || ev.kind === "tool_use") turnBreak = false;
     if (ev.kind === "done") doneEmitted = true;
     if (ev.kind === "response_complete" && agents.running()) return;
     if (ev.kind === "error" && !ev.code && isAuthError(ev.message)) {
